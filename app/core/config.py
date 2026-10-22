@@ -6,7 +6,10 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
     )
 
+    db_password: str
+    database_url: str
+
     app_name: str = "Codebase Copilot"
     environment: str = "development"
 
-setting = Settings()
+settings = Settings()
