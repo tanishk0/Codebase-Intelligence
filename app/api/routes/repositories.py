@@ -101,3 +101,12 @@ def start_ingestion(
             status_code=422,
             detail="Repository ingestion failed",
         )
+    except Exception:
+        db.rollback()
+        repository = db.get(Repository, repository_id)
+
+        if repository is not None:
+            repository.status = "failed"
+            db.commit()
+
+        raise
