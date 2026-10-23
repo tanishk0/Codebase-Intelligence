@@ -11,6 +11,8 @@ from app.services.ingestion.ingest_repository import (
     ingest_repository,
     IngestionError,
 )
+from app.services.ingestion.file_persistence import save_file_records
+from app.models.repository_file import RepositoryFile
 
 router = APIRouter(prefix="/repositories", tags=["Repositories"])
 
@@ -86,12 +88,18 @@ def start_ingestion(
             repository.git_url,
             repository.default_branch,
         )
+        saved_count = save_file_records(
+            db=db,
+            repository_id=repository.id,
+            records=records,
+        )
         repository.status = "completed"
         db.commit()
 
         return {
             "status": repository.status,
             "files_discovered": len(records),
+            "files_saved": saved_count,
         }
 
     except IngestionError:
@@ -110,3 +118,35 @@ def start_ingestion(
             db.commit()
 
         raise
+
+
+@router.get("/{repository_id}/files")
+def list_repository_files(
+    repository_id: int,
+    db: Session = Depends(get_db),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    repository = db.get(Repository, repository_id)
+
+    if repository is None:
+        raise HTTPException(status_code=404, detail="Repository not found")
+
+    files = (
+        db.query(RepositoryFile)
+        .filter(RepositoryFile.repository_id == repository_id)
+        .order_by(RepositoryFile.file_path)
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    return [
+        {
+            "id": file.id,
+            "file_path": file.file_path,
+            "extension": file.extension,
+            "size_bytes": file.size_bytes,
+        }
+        for file in files
+    ]
