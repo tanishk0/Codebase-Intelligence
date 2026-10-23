@@ -10,11 +10,17 @@ class Repository(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    git_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    git_url: Mapped[str] = mapped_column(String(2048), nullable=False, unique=True)
     default_branch: Mapped[str] = mapped_column(String(255), nullable=False, default="main")
     status: Mapped[str] = mapped_column(
         String(50), nullable=False, default="pending", index=True
     ) 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
