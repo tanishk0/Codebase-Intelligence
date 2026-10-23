@@ -68,3 +68,36 @@ def get_repository(
 
     return repository
 
+@router.post("/{repository_id}/ingest")
+def start_ingestion(
+    repository_id: int,
+    db: Session = Depends(get_db),
+):
+    repository = db.get(Repository, repository_id)
+
+    if repository is None:
+        raise HTTPException(status_code=404, detail="Repository not found")
+
+    repository.status = "processing"
+    db.commit()
+
+    try:
+        records = ingest_repository(
+            repository.git_url,
+            repository.default_branch,
+        )
+        repository.status = "completed"
+        db.commit()
+
+        return {
+            "status": repository.status,
+            "files_discovered": len(records),
+        }
+
+    except IngestionError:
+        repository.status = "failed"
+        db.commit()
+        raise HTTPException(
+            status_code=422,
+            detail="Repository ingestion failed",
+        )
