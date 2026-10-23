@@ -10,6 +10,8 @@ dependencies = [
     "psycopg[binary]>=3.3.6",
     "pydantic-settings>=2.16.1",
     "sqlalchemy>=2.1.5",
+    "tree-sitter>=0.26.0",
+    "tree-sitter-language-pack>=1.22.1",
     "uvicorn[standard]>=0.54.0",
 ]
 
