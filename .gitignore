@@ -1,20 +1,36 @@
-# Secrets
-.env
-.env.*
-!.env.example
-
-# Python
-.venv/
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-/tests
-# IDEs
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Environment variables
+.env
+.env.local
+*.env
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# IDE & editors
 .vscode/
 .idea/
+*.swp
+*.swo
 
-# OS
-.DS_Store
-Thumbs.db
+# Testing & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs & temp
+*.log
+scratch/
+tmp/
