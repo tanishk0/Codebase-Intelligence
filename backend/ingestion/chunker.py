@@ -215,6 +215,106 @@ class TreeSitterChunker:
         top_level = self._collect_uncovered_runs(file, covered_lines)
         return top_level + chunks
 
+    def chunk_js_ts(self, file: LoadedFile, parser: Parser) -> list[CodeChunk]:
+        """AST chunker for JavaScript, JSX, TypeScript, and TSX files."""
+        code_bytes = bytes(file.content, "utf8")
+        tree = parser.parse(code_bytes)
+        chunks: list[CodeChunk] = []
+        covered_lines: set[int] = set()
+
+        def add_chunk(content: str, start_l: int, end_l: int, kind: str, parent: str = ""):
+            chunks.append(
+                CodeChunk(
+                    file_path=file.file_path,
+                    content=content,
+                    start_line=start_l,
+                    end_line=end_l,
+                    node_type=kind,
+                    parent_class=parent,
+                )
+            )
+            for line in range(start_l, end_l + 1):
+                covered_lines.add(line)
+
+        def is_class_method_node(n) -> bool:
+            if n.type in JS_METHOD_TYPES:
+                return True
+            if n.type in JS_FIELD_TYPES and self._is_js_function_field(n):
+                return True
+            return False
+
+        def visit(node, current_class: str = ""):
+            wrapper, inner = self._unwrap_js_export(node)
+
+            # 1. Class definition (plain, exported, or abstract)
+            if inner.type in JS_CLASS_TYPES:
+                class_name = self._get_class_name(inner, code_bytes)
+                start_l = wrapper.start_point[0] + 1
+                end_l = wrapper.end_point[0] + 1
+                lines_count = (end_l - start_l) + 1
+
+                # Small class -> keep as 1 atomic chunk
+                if lines_count <= self.max_class_lines:
+                    raw_text = self._get_node_text(wrapper, code_bytes)
+                    content = f"# File: {file.file_path}\n{raw_text}"
+                    add_chunk(content, start_l, end_l, "class", class_name)
+                    return
+
+                # Large class -> mark entire class span as covered so closing braces/fields don't leak into module_preamble
+                for line in range(start_l, end_l + 1):
+                    covered_lines.add(line)
+
+                # 1a. Emit class header (signature, fields before first method)
+                body_node = next((c for c in inner.children if c.type == "class_body"), None)
+                if body_node and body_node.children:
+                    first_method = next((c for c in body_node.children if is_class_method_node(c)), None)
+                    header_end_byte = first_method.start_byte if first_method else wrapper.end_byte
+                    header_text = code_bytes[wrapper.start_byte:header_end_byte].decode("utf8", errors="ignore").strip()
+
+                    if header_text:
+                        h_start = start_l
+                        h_end = h_start + header_text.count("\n")
+                        add_chunk(
+                            f"# File: {file.file_path}\n# Class: {class_name} (Header)\n{header_text}",
+                            h_start,
+                            h_end,
+                            "class_header",
+                            class_name,
+                        )
+
+                # 1b. Recurse into methods inside the class
+                for child in (body_node.children if body_node else inner.children):
+                    visit(child, current_class=class_name)
+                return
+
+            # 2. Function / Method definition (declarations, class methods, arrow function fields/vars)
+            is_func = (
+                inner.type in JS_DIRECT_FUNC_TYPES
+                or is_class_method_node(inner)
+                or (not current_class and inner.type in JS_VAR_DECL_TYPES and self._is_js_function_var_decl(inner))
+            )
+            if is_func:
+                start_l = wrapper.start_point[0] + 1
+                end_l = wrapper.end_point[0] + 1
+                raw_text = self._get_node_text(wrapper, code_bytes)
+                kind = "method" if current_class else "function"
+
+                prefix = f"# File: {file.file_path}\n"
+                if current_class:
+                    prefix += f"# Class: {current_class}\n"
+
+                add_chunk(f"{prefix}{raw_text}", start_l, end_l, kind, current_class)
+                return
+
+            # Continue traversing
+            for child in node.children:
+                visit(child, current_class)
+
+        visit(tree.root_node)
+
+        # 3. Collect top-level code (imports, interfaces, type aliases, constants, exports)
+        top_level = self._collect_uncovered_runs(file, covered_lines)
+        return top_level + chunks
 
     def chunk_fallback(self, file: LoadedFile) -> list[CodeChunk]:
         """Fallback chunker for non-AST files (Markdown, YAML, JSON, TOML, text)."""
@@ -252,6 +352,8 @@ class TreeSitterChunker:
         """Routes file to appropriate AST or text chunker based on extension."""
         if file.extension == ".py":
             return self.chunk_python(file)
+        if file.extension in JS_TS_PARSERS:
+            return self.chunk_js_ts(file, JS_TS_PARSERS[file.extension])
         return self.chunk_fallback(file)
 
     def chunk_all(self, files: list[LoadedFile]) -> list[CodeChunk]:
