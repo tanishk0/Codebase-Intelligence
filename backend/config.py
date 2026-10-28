@@ -16,13 +16,21 @@ class Settings(BaseSettings):
     SUPABASE_KEY: str = ""
     NVIDIA_API_KEY: str = ""
 
-    # Embedding configuration (NVIDIA NIM)
+    # Embedding & LLM configuration (NVIDIA NIM)
     NVIDIA_BASE_URL: str = "https://integrate.api.nvidia.com/v1"
     NVIDIA_EMBED_MODEL: str = "nvidia/nemotron-3.5-embed-1b"
+    NVIDIA_CHAT_MODEL: str = "nvidia/nemotron-3-ultra-550b-a55b"
+    NVIDIA_FAST_MODEL: str = "nvidia/nemotron-3.5-bolt-e4b"
     EMBEDDING_DIMENSIONS: int = 1024
     EMBED_BATCH_SIZE: int = 50
     NVIDIA_REQUESTS_PER_MINUTE: int = 35  # Free tier is ~40 RPM; keep headroom
     SUPABASE_BATCH_SIZE: int = 100
+
+    # Retrieval defaults
+    RETRIEVAL_CANDIDATE_POOL: int = 40
+    RETRIEVAL_TOP_K: int = 8
+    RETRIEVAL_MAX_CHUNKS_PER_FILE: int = 3
+    RETRIEVAL_CONTEXT_TOKEN_BUDGET: int = 6_000
 
     # Ingestion limits
     MAX_FILE_SIZE_BYTES: int = 500_000  # 500 KB per file limit

@@ -19,7 +19,7 @@ def validate_github_url(url: str) -> None:
 class RepoCloner:
     """Clones a remote repository to a temporary directory for ingestion."""
 
-    def __init__(self, git_url: str, branch: str = "main"):
+    def __init__(self, git_url: str, branch: str | None = None):
         validate_github_url(git_url)
         self.git_url = git_url
         self.branch = branch
@@ -30,13 +30,16 @@ class RepoCloner:
         target_path = Path(self._temp_dir.name)
 
         try:
-            # depth=1 downloads only the latest commit, minimizing disk and network usage
+            # depth=1 downloads only the latest commit, minimizing disk and network usage.
+            # When branch is None, git automatically clones the remote's default branch (main, master, etc.).
+            clone_kwargs = {"depth": 1, "single_branch": True}
+            if self.branch:
+                clone_kwargs["branch"] = self.branch
+
             Repo.clone_from(
                 url=self.git_url,
                 to_path=target_path,
-                depth=1,
-                single_branch=True,
-                branch=self.branch,
+                **clone_kwargs,
             )
             return target_path
         except GitCommandError as exc:

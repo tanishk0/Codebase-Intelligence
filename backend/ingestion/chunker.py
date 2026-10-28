@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import re
 from tree_sitter import Language, Parser
 import tree_sitter_javascript as tsjs
 import tree_sitter_python as tspython
@@ -28,6 +29,26 @@ JS_METHOD_TYPES = {"method_definition", "abstract_method_signature"}
 JS_FIELD_TYPES = {"field_definition", "public_field_definition"}
 JS_VAR_DECL_TYPES = {"lexical_declaration", "variable_declaration"}
 
+_CAMEL_BOUNDARY_1 = re.compile(r"([a-z0-9])([A-Z])")
+_CAMEL_BOUNDARY_2 = re.compile(r"([A-Z]+)([A-Z][a-z])")
+_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}")
+
+
+def split_identifier_tokens(text: str) -> str:
+    """Expands camelCase, PascalCase, and snake_case identifiers into space-separated words for FTS."""
+    expanded: list[str] = []
+    seen: set[str] = set()
+    for match in _IDENT_RE.finditer(text):
+        ident = match.group(0)
+        if ident in seen:
+            continue
+        seen.add(ident)
+        spaced = _CAMEL_BOUNDARY_1.sub(r"\1 \2", _CAMEL_BOUNDARY_2.sub(r"\1 \2", ident))
+        parts = [p.lower() for p in re.split(r"[_\s]+", spaced) if p]
+        if len(parts) > 1:
+            expanded.extend(parts)
+    return " ".join(expanded)
+
 
 @dataclass
 class CodeChunk:
@@ -35,13 +56,38 @@ class CodeChunk:
     content: str
     start_line: int
     end_line: int
-    node_type: str        # e.g., "method", "function", "class", "class_header", "module_preamble", "text"
+    node_type: str         # "method", "function", "class", "class_header", "module_preamble", "text", "file_summary"
     parent_class: str = "" # e.g., "UserRepository"
+    symbol_name: str = ""  # e.g., "get_user", "UserRepository"
+
+
+def build_search_text(chunk: CodeChunk) -> str:
+    """Builds keyword-rich text combining file path, symbols, split identifiers, and content for hybrid FTS."""
+    path_words = re.sub(r"[/._\-]+", " ", chunk.file_path)
+    split_tokens = split_identifier_tokens(
+        f"{chunk.file_path} {chunk.parent_class} {chunk.symbol_name} {chunk.content}"
+    )
+    parts = [
+        chunk.file_path,
+        path_words,
+        chunk.parent_class,
+        chunk.symbol_name,
+        split_tokens,
+        chunk.content,
+    ]
+    return " ".join(p for p in parts if p)
 
 
 class TreeSitterChunker:
-    def __init__(self, max_class_lines: int = 50, fallback_chunk_lines: int = 60, fallback_overlap_lines: int = 10):
+    def __init__(
+        self,
+        max_class_lines: int = 50,
+        max_function_lines: int = 120,
+        fallback_chunk_lines: int = 60,
+        fallback_overlap_lines: int = 10,
+    ):
         self.max_class_lines = max_class_lines
+        self.max_function_lines = max_function_lines
         self.fallback_chunk_lines = fallback_chunk_lines
         self.fallback_overlap_lines = fallback_overlap_lines
 
@@ -70,6 +116,16 @@ class TreeSitterChunker:
                 return self._get_node_text(child, code_bytes)
         return "UnknownClass"
 
+    def _get_function_name(self, func_node, code_bytes: bytes) -> str:
+        for child in func_node.children:
+            if child.type in {"identifier", "property_identifier", "type_identifier"}:
+                return self._get_node_text(child, code_bytes)
+            if child.type == "variable_declarator":
+                for sub in child.children:
+                    if sub.type in {"identifier", "property_identifier"}:
+                        return self._get_node_text(sub, code_bytes)
+        return ""
+
     def _is_js_function_field(self, field_node) -> bool:
         """True if a class field_definition / public_field_definition assigns a function or arrow function."""
         return any(child.type in JS_FUNCTION_VALUE_TYPES for child in field_node.children)
@@ -88,6 +144,36 @@ class TreeSitterChunker:
                     if args and any(arg.type in JS_FUNCTION_VALUE_TYPES for arg in args.children):
                         return True
         return False
+
+    def _emit_function_chunks(
+        self,
+        raw_text: str,
+        start_l: int,
+        end_l: int,
+        kind: str,
+        parent_class: str,
+        symbol_name: str,
+        prefix: str,
+        add_chunk_fn,
+    ) -> None:
+        """Emits a function/method chunk, splitting oversized functions while carrying the signature header."""
+        lines = raw_text.splitlines()
+        if len(lines) <= self.max_function_lines:
+            add_chunk_fn(f"{prefix}{raw_text}", start_l, end_l, kind, parent_class, symbol_name)
+            return
+
+        signature_line = next((l.strip() for l in lines if l.strip() and not l.strip().startswith("@")), lines[0].strip())
+        step = max(1, self.max_function_lines - self.fallback_overlap_lines)
+        for idx in range(0, len(lines), step):
+            part = lines[idx : idx + self.max_function_lines]
+            if not part:
+                continue
+            p_start = start_l + idx
+            p_end = start_l + idx + len(part) - 1
+            header = prefix if idx == 0 else f"{prefix}# Function: {signature_line} (continued)\n"
+            add_chunk_fn(header + "\n".join(part), p_start, p_end, kind, parent_class, symbol_name)
+            if p_end >= end_l:
+                break
 
     def _collect_uncovered_runs(self, file: LoadedFile, covered_lines: set[int]) -> list[CodeChunk]:
         """Collect contiguous runs of uncovered top-level lines (imports, constants, types, globals)."""
@@ -130,7 +216,14 @@ class TreeSitterChunker:
         chunks: list[CodeChunk] = []
         covered_lines: set[int] = set()
 
-        def add_chunk(content: str, start_l: int, end_l: int, kind: str, parent: str = ""):
+        def add_chunk(
+            content: str,
+            start_l: int,
+            end_l: int,
+            kind: str,
+            parent: str = "",
+            symbol: str = "",
+        ):
             chunks.append(
                 CodeChunk(
                     file_path=file.file_path,
@@ -139,6 +232,7 @@ class TreeSitterChunker:
                     end_line=end_l,
                     node_type=kind,
                     parent_class=parent,
+                    symbol_name=symbol,
                 )
             )
             for line in range(start_l, end_l + 1):
@@ -158,7 +252,7 @@ class TreeSitterChunker:
                 if lines_count <= self.max_class_lines:
                     raw_text = self._get_node_text(wrapper, code_bytes)
                     content = f"# File: {file.file_path}\n{raw_text}"
-                    add_chunk(content, start_l, end_l, "class", class_name)
+                    add_chunk(content, start_l, end_l, "class", class_name, class_name)
                     return
 
                 # Large class -> mark entire class span as covered so trailing lines/braces don't leak into module_preamble
@@ -184,6 +278,7 @@ class TreeSitterChunker:
                             h_end,
                             "class_header",
                             class_name,
+                            class_name,
                         )
 
                 # 1b. Recurse into methods inside the class
@@ -197,12 +292,22 @@ class TreeSitterChunker:
                 end_l = wrapper.end_point[0] + 1
                 raw_text = self._get_node_text(wrapper, code_bytes)
                 kind = "method" if current_class else "function"
+                func_name = self._get_function_name(inner, code_bytes)
 
                 prefix = f"# File: {file.file_path}\n"
                 if current_class:
                     prefix += f"# Class: {current_class}\n"
 
-                add_chunk(f"{prefix}{raw_text}", start_l, end_l, kind, current_class)
+                self._emit_function_chunks(
+                    raw_text=raw_text,
+                    start_l=start_l,
+                    end_l=end_l,
+                    kind=kind,
+                    parent_class=current_class,
+                    symbol_name=func_name,
+                    prefix=prefix,
+                    add_chunk_fn=add_chunk,
+                )
                 return
 
             # Continue traversing
@@ -222,7 +327,14 @@ class TreeSitterChunker:
         chunks: list[CodeChunk] = []
         covered_lines: set[int] = set()
 
-        def add_chunk(content: str, start_l: int, end_l: int, kind: str, parent: str = ""):
+        def add_chunk(
+            content: str,
+            start_l: int,
+            end_l: int,
+            kind: str,
+            parent: str = "",
+            symbol: str = "",
+        ):
             chunks.append(
                 CodeChunk(
                     file_path=file.file_path,
@@ -231,6 +343,7 @@ class TreeSitterChunker:
                     end_line=end_l,
                     node_type=kind,
                     parent_class=parent,
+                    symbol_name=symbol,
                 )
             )
             for line in range(start_l, end_l + 1):
@@ -257,7 +370,7 @@ class TreeSitterChunker:
                 if lines_count <= self.max_class_lines:
                     raw_text = self._get_node_text(wrapper, code_bytes)
                     content = f"# File: {file.file_path}\n{raw_text}"
-                    add_chunk(content, start_l, end_l, "class", class_name)
+                    add_chunk(content, start_l, end_l, "class", class_name, class_name)
                     return
 
                 # Large class -> mark entire class span as covered so closing braces/fields don't leak into module_preamble
@@ -280,6 +393,7 @@ class TreeSitterChunker:
                             h_end,
                             "class_header",
                             class_name,
+                            class_name,
                         )
 
                 # 1b. Recurse into methods inside the class
@@ -298,12 +412,22 @@ class TreeSitterChunker:
                 end_l = wrapper.end_point[0] + 1
                 raw_text = self._get_node_text(wrapper, code_bytes)
                 kind = "method" if current_class else "function"
+                func_name = self._get_function_name(inner, code_bytes)
 
                 prefix = f"# File: {file.file_path}\n"
                 if current_class:
                     prefix += f"# Class: {current_class}\n"
 
-                add_chunk(f"{prefix}{raw_text}", start_l, end_l, kind, current_class)
+                self._emit_function_chunks(
+                    raw_text=raw_text,
+                    start_l=start_l,
+                    end_l=end_l,
+                    kind=kind,
+                    parent_class=current_class,
+                    symbol_name=func_name,
+                    prefix=prefix,
+                    add_chunk_fn=add_chunk,
+                )
                 return
 
             # Continue traversing
