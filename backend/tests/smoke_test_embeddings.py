@@ -31,11 +31,11 @@ def run_embeddings_smoke_test() -> None:
     print(f"   Indexed {len(sample_chunks)} chunks under repo_id={repo_id}.")
 
     query = "How does the Tree-sitter Python AST chunker split large classes?"
-    matches = store.query(query, repo_id=repo_id, embedder=embedder, match_count=3, similarity_threshold=0.0)
-    print(f"   Top {len(matches)} semantic search matches for: '{query}'")
+    matches = store.query(query, repo_id=repo_id, embedder=embedder, match_count=3)
+    print(f"   Top {len(matches)} hybrid search matches for: '{query}'")
     for idx, match in enumerate(matches, start=1):
         print(
-            f"     #{idx} [{match['similarity']:.3f}] {match['file_path']} "
+            f"     #{idx} [rrf={match.get('rrf_score', 0.0):.4f}, sim={match['similarity']:.3f}] {match['file_path']} "
             f"(L{match['start_line']}-L{match['end_line']}, {match['node_type']})"
         )
 

@@ -230,13 +230,24 @@ class TestSupabaseVectorStore(unittest.TestCase):
             self.store.index_chunks("https://github.com/org/repo", chunks=[], embedder=embedder)
         self.repo_table.update.assert_not_called()
 
-    def test_search_rpc(self) -> None:
+    def test_hybrid_search_rpc(self) -> None:
         self.client.rpc.return_value.execute.return_value.data = [{"file_path": "a.py", "similarity": 0.88}]
-        results = self.store.search([0.1, 0.2], repo_id="repo-1", match_count=5, similarity_threshold=0.3)
+        results = self.store.hybrid_search(
+            [0.1, 0.2],
+            query_text="how does TreeSitterChunker work?",
+            repo_id="repo-1",
+            match_count=5,
+        )
         self.assertEqual(len(results), 1)
         self.client.rpc.assert_called_once_with(
-            "match_code_chunks",
-            {"query_embedding": [0.1, 0.2], "match_repo_id": "repo-1", "match_count": 5, "similarity_threshold": 0.3},
+            "hybrid_search_code_chunks",
+            {
+                "query_embedding": [0.1, 0.2],
+                "query_text": "how does TreeSitterChunker work? tree sitter chunker",
+                "match_repo_id": "repo-1",
+                "match_count": 5,
+                "rrf_k": 60,
+            },
         )
 
 
