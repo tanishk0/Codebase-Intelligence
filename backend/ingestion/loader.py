@@ -21,11 +21,30 @@ def is_text_file(path: Path) -> bool:
         return False
 
 
+def is_safe_path(path: Path, resolved_root: Path) -> bool:
+    """Reject symlinks and anything that resolves outside the repository root.
+
+    Cloned repos are untrusted input: a malicious repo could ship a symlink such as
+    `notes.txt -> ~/.ssh/id_rsa` to get host files read, embedded, and stored.
+    """
+    if path.is_symlink():
+        return False
+    try:
+        return path.resolve().is_relative_to(resolved_root)
+    except OSError:
+        return False
+
+
 def load_repository_files(repo_root: Path) -> list[LoadedFile]:
     """Scans the cloned directory and extracts all code files adhering to size and type limits."""
     loaded_files: list[LoadedFile] = []
+    resolved_root = repo_root.resolve()
 
     for path in repo_root.rglob("*"):
+        # 0. Security: skip symlinks and paths escaping the repo root
+        if not is_safe_path(path, resolved_root):
+            continue
+
         if not path.is_file():
             continue
 
