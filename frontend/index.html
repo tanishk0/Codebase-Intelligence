@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Codebase Copilot</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Left Sidebar: Ingestion & Indexed Repositories -->
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        <h1>Codebase Copilot</h1>
+      </div>
+
+      <section class="card">
+        <h2>Index Repository</h2>
+        <form id="ingest-form">
+          <label for="repo-url">GitHub HTTPS URL (or <code>local</code>)</label>
+          <input
+            id="repo-url"
+            type="text"
+            placeholder="https://github.com/psf/requests"
+            required
+          />
+          <div class="row">
+            <input id="repo-branch" type="text" placeholder="Branch (optional)" />
+            <label class="checkbox-label" title="Use fast Nemotron LLM to enrich file summaries">
+              <input id="llm-summaries" type="checkbox" />
+              LLM Summaries
+            </label>
+          </div>
+          <div class="btn-row">
+            <button type="submit" id="ingest-btn" class="btn primary">Index Repo</button>
+            <button type="button" id="ingest-local-btn" class="btn secondary" title="Index this local backend folder immediately">
+              ⚡ Index Local
+            </button>
+          </div>
+          <div id="ingest-status" class="status-text"></div>
+        </form>
+      </section>
+
+      <section class="repos-section">
+        <div class="section-header">
+          <h2>Indexed Repositories</h2>
+          <button id="refresh-repos-btn" class="icon-btn" title="Refresh list">↻</button>
+        </div>
+        <div id="repos-list" class="repos-list">
+          <div class="empty-hint">Loading repositories...</div>
+        </div>
+      </section>
+    </aside>
+
+    <!-- Main Chat Area -->
+    <main class="chat-panel">
+      <header class="chat-header">
+        <div>
+          <div id="active-repo-label" class="active-repo-title">Select or index a repository</div>
+          <div id="health-banner" class="health-sub">Checking backend status...</div>
+        </div>
+        <button id="new-chat-btn" class="btn secondary small">New Conversation</button>
+      </header>
+
+      <div id="health-alert" class="alert hidden"></div>
+
+      <div id="chat-messages" class="chat-messages">
+        <div class="welcome-state">
+          <h3>Ask anything about your codebase</h3>
+          <p>Every question runs unified <strong>Hybrid Search (Keyword FTS + Semantic pgvector via RRF)</strong>, code-aware reranking, class/import context expansion, and multi-turn follow-up rewriting.</p>
+          <div class="sample-prompts">
+            <button class="prompt-chip" data-prompt="What does this repository do and how are the modules organized?">
+              What does this repository do?
+            </button>
+            <button class="prompt-chip" data-prompt="How does TreeSitterChunker split large Python classes?">
+              How does TreeSitterChunker split large classes?
+            </button>
+            <button class="prompt-chip" data-prompt="Why does it mark the whole class span in covered_lines?">
+              Follow-up: Why does it mark covered_lines?
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <form id="chat-form" class="chat-input-bar">
+        <textarea
+          id="chat-input"
+          rows="2"
+          placeholder="Ask a question or follow-up (Enter to send, Shift+Enter for newline)..."
+          required
+        ></textarea>
+        <button type="submit" id="send-btn" class="btn primary">Send</button>
+      </form>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
+
