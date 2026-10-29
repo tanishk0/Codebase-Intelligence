@@ -1,5 +1,4 @@
--- Run this script in your Supabase SQL Editor to set up pgvector, unified hybrid search (RRF),
--- hierarchical summaries, and multi-turn conversation tables.
+-- Copy and paste this entire file into your Supabase Dashboard -> SQL Editor and click "Run".
 -- Safe to re-run: every statement is idempotent.
 
 -- 1. Enable required extensions
@@ -80,15 +79,8 @@ create table if not exists public.messages (
 
 create index if not exists idx_messages_conversation_id on public.messages(conversation_id, created_at);
 
--- 6. Security: lock all tables down with RLS. Only the backend's secret (service_role) key has access.
-alter table public.repositories enable row level security;
-alter table public.code_chunks enable row level security;
-alter table public.conversations enable row level security;
-alter table public.messages enable row level security;
-
--- 7. Unified Hybrid Search RPC: Reciprocal Rank Fusion (RRF) combining pgvector semantic search
---    + Postgres full-text keyword search (using OR-joined lexemes so natural language questions
---    still match code identifiers even when not every conversational word appears in the code).
+-- 6. Unified Hybrid Search RPC: Reciprocal Rank Fusion (RRF) combining pgvector semantic search
+--    + Postgres full-text keyword search
 create or replace function public.hybrid_search_code_chunks(
     query_embedding vector(1024),
     query_text text,
@@ -180,8 +172,5 @@ as $$
     limit match_count;
 $$;
 
--- Only the backend (service_role) may call the hybrid search RPC
-revoke execute on function public.hybrid_search_code_chunks(vector, text, uuid, int, int)
-    from public, anon, authenticated;
 grant execute on function public.hybrid_search_code_chunks(vector, text, uuid, int, int)
-    to service_role;
+    to anon, authenticated, service_role;
