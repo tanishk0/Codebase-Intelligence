@@ -54,6 +54,13 @@ class CodeReranker:
         file_path = str(chunk.get("file_path") or "")
         symbol_name = str(chunk.get("symbol_name") or "")
         parent_class = str(chunk.get("parent_class") or "")
+        node_type = str(chunk.get("node_type") or "")
+
+        # Prefer concrete implementation chunks over file_summary outlines
+        if node_type in {"function", "method", "class"}:
+            bonus += 0.08
+        elif node_type == "file_summary":
+            bonus -= 0.04
 
         # 1. Exact or substring symbol match boost
         if plan.target_symbol:
@@ -115,9 +122,10 @@ class CodeReranker:
 
         ranked = sorted(deduped.values(), key=lambda c: c["rerank_score"], reverse=True)
 
-        # Enforce per-file diversity and dynamic drop-off cutoff
+        # Enforce per-file diversity, file_summary cap, and dynamic drop-off cutoff
         selected: list[dict[str, Any]] = []
         per_file_counts: dict[str, int] = defaultdict(int)
+        summary_count = 0
         top_score = ranked[0]["rerank_score"] if ranked else 0.0
 
         for chunk in ranked:
@@ -126,6 +134,11 @@ class CodeReranker:
             # Dynamic cutoff: drop trailing noise if score falls below 35% of top score (after at least 3 results)
             if len(selected) >= 3 and top_score > 0 and chunk["rerank_score"] < top_score * 0.35:
                 break
+
+            if chunk.get("node_type") == "file_summary":
+                if summary_count >= 2:
+                    continue
+                summary_count += 1
 
             fp = str(chunk.get("file_path") or "")
             if per_file_counts[fp] >= self.max_chunks_per_file:
