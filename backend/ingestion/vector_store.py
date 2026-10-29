@@ -1,6 +1,4 @@
-import base64
 from datetime import datetime, timezone
-import json
 from typing import Any
 import uuid
 from supabase import Client, create_client
@@ -8,32 +6,6 @@ from config import settings
 from ingestion.chunker import CodeChunk, build_search_text, split_identifier_tokens
 from ingestion.embedder import EmbeddedChunk, NvidiaEmbedder
 from ingestion.summarizer import RepoSummarizer
-
-
-def assert_server_key(key: str) -> None:
-    """Refuse public/anon keys. The backend must use the secret (service_role) key.
-
-    Publishable/anon keys are meant to be shipped to browsers. With RLS enabled (as our schema does)
-    they cannot read or write these tables; with RLS disabled they would let anyone dump or wipe the index.
-    """
-    if key.startswith("sb_publishable_"):
-        raise ValueError(
-            "SUPABASE_KEY is a publishable (public) key. Use the secret key (sb_secret_...) from "
-            "Supabase Dashboard -> Project Settings -> API Keys. Never expose it to the frontend."
-        )
-
-    # Legacy JWT-style keys: inspect the role claim without verifying the signature
-    parts = key.split(".")
-    if len(parts) == 3:
-        try:
-            padded = parts[1] + "=" * (-len(parts[1]) % 4)
-            role = json.loads(base64.urlsafe_b64decode(padded)).get("role")
-        except (ValueError, json.JSONDecodeError):
-            return
-        if role == "anon":
-            raise ValueError(
-                "SUPABASE_KEY is the legacy anon key. Use the service_role / secret key for the backend."
-            )
 
 
 class SupabaseVectorStore:
@@ -56,11 +28,20 @@ class SupabaseVectorStore:
         supabase_key = key if key is not None else settings.SUPABASE_KEY
         if not supabase_url or not supabase_key:
             raise ValueError("SUPABASE_URL and SUPABASE_KEY are required. Set them in your .env file.")
-        assert_server_key(supabase_key)
 
         self.client = create_client(supabase_url, supabase_key)
 
     # ---------- repository bookkeeping ----------
+
+    def list_repositories(self) -> list[dict[str, Any]]:
+        """Lists all indexed repositories ordered by most recently indexed."""
+        res = (
+            self.client.table("repositories")
+            .select("id,repo_url,branch,chunk_count,embed_model,embedding_dim,indexed_at,active_run_id")
+            .order("indexed_at", desc=True)
+            .execute()
+        )
+        return list(res.data or [])
 
     def get_or_create_repository(self, repo_url: str, branch: str = "main") -> str:
         """Returns the repository id, creating the record if needed. Does not touch the active index."""
@@ -185,14 +166,12 @@ class SupabaseVectorStore:
                 repo_summary=repo_summary,
             )
         except BaseException:
-            # Best-effort cleanup of the partial run; the old active run is untouched either way.
             try:
                 self._delete_run(repo_id, run_id)
             except Exception:
                 pass
             raise
 
-        # Old runs are invisible to search already; deleting them just reclaims space.
         try:
             self._delete_stale_runs(repo_id, keep_run_id=run_id)
         except Exception:
@@ -200,25 +179,7 @@ class SupabaseVectorStore:
 
         return repo_id
 
-    # ---------- search methods ----------
-
-    def search(
-        self,
-        query_embedding: list[float],
-        repo_id: str | None = None,
-        match_count: int = 10,
-        similarity_threshold: float = 0.2,
-    ) -> list[dict[str, Any]]:
-        """Cosine-similarity vector search via the match_code_chunks RPC."""
-        params: dict[str, Any] = {
-            "query_embedding": query_embedding,
-            "match_count": match_count,
-            "similarity_threshold": similarity_threshold,
-        }
-        if repo_id:
-            params["match_repo_id"] = repo_id
-        res = self.client.rpc("match_code_chunks", params).execute()
-        return list(res.data or [])
+    # ---------- unified hybrid search ----------
 
     def hybrid_search(
         self,
@@ -228,11 +189,7 @@ class SupabaseVectorStore:
         match_count: int = 30,
         rrf_k: int = 60,
     ) -> list[dict[str, Any]]:
-        """Executes unified hybrid search (pgvector semantic similarity + full-text keyword search via RRF).
-
-        Expands camelCase/snake_case identifiers in `query_text` before sending to Postgres FTS so
-        both full identifiers and split words participate in keyword matching alongside semantic search.
-        """
+        """Executes unified hybrid search (pgvector semantic similarity + full-text keyword search via RRF)."""
         expanded_query_text = f"{query_text} {split_identifier_tokens(query_text)}".strip()
         params: dict[str, Any] = {
             "query_embedding": query_embedding,

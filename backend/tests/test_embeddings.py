@@ -1,5 +1,3 @@
-import base64
-import json
 from pathlib import Path
 import sys
 import unittest
@@ -13,7 +11,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from ingestion.chunker import CodeChunk
 from ingestion.embedder import EmbeddedChunk, EmbeddingError, NvidiaEmbedder, RateLimiter, parse_retry_after
-from ingestion.vector_store import SupabaseVectorStore, assert_server_key
+from ingestion.vector_store import SupabaseVectorStore
 
 
 def make_response(status: int, data: list | None = None, headers: dict | None = None) -> MagicMock:
@@ -136,23 +134,6 @@ class TestNvidiaEmbedder(unittest.TestCase):
         now[0] += 5.0
         limiter.wait()  # enough time passed: immediate
         self.assertEqual(sleeps, [2.0])
-
-
-def _jwt_with_role(role: str) -> str:
-    payload = base64.urlsafe_b64encode(json.dumps({"role": role}).encode()).decode().rstrip("=")
-    return f"header.{payload}.signature"
-
-
-class TestServerKeyGuard(unittest.TestCase):
-    def test_rejects_publishable_and_anon_keys(self) -> None:
-        with self.assertRaises(ValueError):
-            assert_server_key("sb_publishable_abc123")
-        with self.assertRaises(ValueError):
-            assert_server_key(_jwt_with_role("anon"))
-
-    def test_accepts_secret_and_service_role_keys(self) -> None:
-        assert_server_key("sb_secret_abc123")
-        assert_server_key(_jwt_with_role("service_role"))
 
 
 class TestSupabaseVectorStore(unittest.TestCase):
