@@ -16,7 +16,8 @@ _NO_RETRIEVAL_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 _FOLLOWUP_REFERENCE_RE = re.compile(
-    r"\b(it|its|that|this|those|these|they|them|the above|previous|last|other method|same class|same file)\b",
+    r"\b(it|its|that|this|those|these|they|them|the above|previous|last|other method|same class|same file)\b"
+    r"|^(?:why|what about|how about|and |also |where does|when does)\b",
     re.IGNORECASE,
 )
 
@@ -101,8 +102,6 @@ class QueryRouter:
         )
 
     def _needs_condensing(self, message: str) -> bool:
-        if len(message.split()) <= 8:
-            return True
         return bool(_FOLLOWUP_REFERENCE_RE.search(message))
 
     def _condense_with_history(
