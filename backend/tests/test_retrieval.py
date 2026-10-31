@@ -8,8 +8,10 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from ingestion.chunker import CodeChunk, TreeSitterChunker, build_search_text, split_identifier_tokens
+from ingestion.dependency import DependencyAnalyzer
 from ingestion.loader import LoadedFile
 from ingestion.summarizer import RepoSummarizer, build_file_outline
+from ingestion.vector_store import SupabaseVectorStore
 from retrieval.chat_engine import ConversationalRAGEngine
 from retrieval.query_router import QueryPlan, QueryRouter
 from retrieval.reranker import CodeReranker, ContextAssembler
@@ -255,6 +257,232 @@ class TestConversationalRAGFlow(unittest.TestCase):
         self.assertIn("ingestion/chunker.py:L150-L192", turn.answer)
         self.assertIn(42, turn.cited_chunk_ids)
         mock_store.fetch_chunks_by_ids.assert_called_once_with([41])
+
+
+class TestDependencyAnalyzer(unittest.TestCase):
+    def test_python_imports_inheritance_and_call_graph_disambiguation(self) -> None:
+        chunker = TreeSitterChunker(max_class_lines=5)
+        analyzer = DependencyAnalyzer()
+
+        files = [
+            LoadedFile(
+                "backend/core/base.py",
+                "\n".join(
+                    [
+                        "class BaseService:",
+                        "    def audit_log(self, msg: str) -> None:",
+                        "        pass",
+                        "",
+                        "    def ping(self) -> str:",
+                        "        return 'ok'",
+                    ]
+                ),
+                ".py",
+                120,
+            ),
+            LoadedFile(
+                "backend/utils/crypto.py",
+                "\n".join(
+                    [
+                        "def verify_signature(payload: str) -> bool:",
+                        "    return len(payload) > 0",
+                        "",
+                        "def common_helper() -> int:",
+                        "    return 1",
+                    ]
+                ),
+                ".py",
+                110,
+            ),
+            LoadedFile(
+                "backend/other/ambiguous.py",
+                "\n".join(
+                    [
+                        "def common_helper() -> int:",
+                        "    return 2",
+                        "",
+                        "def unique_repo_func() -> str:",
+                        "    return 'unique'",
+                    ]
+                ),
+                ".py",
+                110,
+            ),
+            LoadedFile(
+                "backend/services/auth.py",
+                "\n".join(
+                    [
+                        "from core.base import BaseService",
+                        "from ..utils.crypto import verify_signature",
+                        "",
+                        "class AuthService(BaseService):",
+                        "    def login(self, token: str) -> bool:",
+                        "        self.audit_log(token)",
+                        "        ok = verify_signature(token)",
+                        "        unique_repo_func()",
+                        "        common_helper()",
+                        "        return ok",
+                    ]
+                ),
+                ".py",
+                260,
+            ),
+        ]
+
+        chunks = chunker.chunk_all(files)
+        analyzer.analyze(chunks, files=files)
+        # Re-running analyze() must be idempotent
+        analyzer.analyze(chunks, files=files)
+
+        by_sym = {(c.file_path, c.node_type, c.symbol_name): c for c in chunks}
+        login_chunk = by_sym[("backend/services/auth.py", "method", "login")]
+        verify_chunk = by_sym[("backend/utils/crypto.py", "function", "verify_signature")]
+        audit_chunk = by_sym[("backend/core/base.py", "method", "audit_log")]
+
+        # 1. File-level imports & reverse imported_by
+        self.assertEqual(
+            login_chunk.imports,
+            ["backend/core/base.py", "backend/utils/crypto.py"],
+        )
+        self.assertIn("backend/services/auth.py", verify_chunk.imported_by)
+        self.assertIn("backend/services/auth.py", audit_chunk.imported_by)
+
+        # 2. Class inheritance
+        self.assertEqual(login_chunk.inherits_from, ["BaseService"])
+
+        # 3. Call graph disambiguation:
+        # - `audit_log` resolved via inherited method on BaseService
+        # - `verify_signature` resolved via imported file `backend/utils/crypto.py`
+        # - `unique_repo_func` resolved via repo-wide unique fallback
+        # - `common_helper` resolved to `backend/utils/crypto.py` (imported) and NOT `backend/other/ambiguous.py`
+        self.assertEqual(
+            login_chunk.calls,
+            ["audit_log", "verify_signature", "unique_repo_func", "common_helper"],
+        )
+        self.assertIn("AuthService.login", verify_chunk.called_by)
+        self.assertIn("AuthService.login", audit_chunk.called_by)
+
+        ambiguous_other = by_sym[("backend/other/ambiguous.py", "function", "common_helper")]
+        self.assertEqual(ambiguous_other.called_by, [])
+
+        # 4. Injected headers on chunk.content
+        self.assertIn("# Inherits from: BaseService", login_chunk.content)
+        self.assertIn("# Calls: audit_log, verify_signature", login_chunk.content)
+        self.assertIn("# Called by: AuthService.login", verify_chunk.content)
+
+    def test_typescript_alias_and_barrel_resolution(self) -> None:
+        chunker = TreeSitterChunker(max_class_lines=5)
+        analyzer = DependencyAnalyzer()
+
+        files = [
+            LoadedFile(
+                "src/api/index.ts",
+                "export function fetchJson(url: string) {\n    return url;\n}\n",
+                ".ts",
+                60,
+            ),
+            LoadedFile(
+                "src/services/user.ts",
+                "\n".join(
+                    [
+                        "import { fetchJson } from '@/api';",
+                        "",
+                        "export class UserService extends BaseClient {",
+                        "    loadUser(id: string) {",
+                        "        return fetchJson(id);",
+                        "    }",
+                        "    reset() {",
+                        "        return null;",
+                        "    }",
+                        "}",
+                    ]
+                ),
+                ".ts",
+                200,
+            ),
+        ]
+
+        chunks = chunker.chunk_all(files)
+        analyzer.analyze(chunks, files=files)
+
+        load_user = next(c for c in chunks if c.symbol_name == "loadUser")
+        fetch_json = next(c for c in chunks if c.symbol_name == "fetchJson")
+
+        self.assertEqual(load_user.imports, ["src/api/index.ts"])
+        self.assertEqual(fetch_json.imported_by, ["src/services/user.ts"])
+        self.assertEqual(load_user.inherits_from, ["BaseClient"])
+        self.assertEqual(load_user.calls, ["fetchJson"])
+        self.assertEqual(fetch_json.called_by, ["UserService.loadUser"])
+
+    def test_one_hop_dependency_expansion_capped_at_four(self) -> None:
+        primary_chunks = [
+            {
+                "id": 1,
+                "file_path": "backend/services/auth.py",
+                "start_line": 10,
+                "end_line": 20,
+                "node_type": "method",
+                "parent_class": "AuthService",
+                "symbol_name": "login",
+                "calls": ["verify_signature", "decode_jwt", "load_user", "check_acl", "audit_event"],
+                "called_by": ["Router.post_login"],
+                "inherits_from": ["BaseService"],
+                "content": "# File: backend/services/auth.py\ndef login(self, token): ...",
+                "rerank_score": 0.92,
+            }
+        ]
+        dep_symbols = CodebaseRetriever._extract_dependency_symbols(primary_chunks, max_primary=3)
+        self.assertEqual(
+            dep_symbols[:5],
+            ["verify_signature", "decode_jwt", "load_user", "check_acl", "audit_event"],
+        )
+
+        # Verify SupabaseVectorStore.fetch_context_neighbors caps 1-hop dependency chunks at 4
+        mock_client = MagicMock()
+        repo_table = MagicMock()
+        chunks_table = MagicMock()
+        mock_client.table.side_effect = lambda name: repo_table if name == "repositories" else chunks_table
+        repo_table.select.return_value.eq.return_value.execute.return_value.data = [
+            {"id": "repo-1", "active_run_id": "run-1"}
+        ]
+
+        # First query: module_preamble / class_header; Second query: dependency symbols
+        preamble_exec = MagicMock()
+        preamble_exec.data = []
+        dep_exec = MagicMock()
+        dep_exec.data = [
+            {
+                "id": 100 + i,
+                "file_path": f"backend/utils/dep_{i}.py",
+                "start_line": 1,
+                "end_line": 5,
+                "node_type": "function",
+                "parent_class": "",
+                "symbol_name": sym,
+                "content": f"def {sym}(): pass",
+            }
+            for i, sym in enumerate(
+                ["verify_signature", "decode_jwt", "load_user", "check_acl", "audit_event"]
+            )
+        ]
+        (
+            chunks_table.select.return_value.eq.return_value.eq.return_value.in_.return_value.in_.return_value.execute
+        ).side_effect = [preamble_exec, dep_exec]
+
+        store = SupabaseVectorStore(client=mock_client)
+        neighbors = store.fetch_context_neighbors(
+            repo_id="repo-1",
+            file_paths=["backend/services/auth.py"],
+            parent_classes=["AuthService"],
+            dependency_symbols=dep_symbols,
+            max_dependency_chunks=4,
+        )
+        dep_neighbors = [n for n in neighbors if n.get("is_dependency_neighbor")]
+        self.assertEqual(len(dep_neighbors), 4)
+        self.assertEqual(
+            [n["symbol_name"] for n in dep_neighbors],
+            ["verify_signature", "decode_jwt", "load_user", "check_acl"],
+        )
 
 
 if __name__ == "__main__":
