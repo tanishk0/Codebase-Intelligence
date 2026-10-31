@@ -120,6 +120,7 @@ def ingest_repository(req: IngestRequest) -> dict[str, Any]:
             chunks=chunks,
             embedder=embedder,
             branch=branch_label,
+            files=files,
             include_summaries=True,
             summarizer=summarizer,
             llm_summaries=req.llm_summaries,
@@ -178,6 +179,7 @@ def chat_with_repo(req: ChatRequest) -> dict[str, Any]:
                 "fts_rank": round(float(c.get("fts_rank") or 0.0), 4),
                 "rerank_score": round(float(c.get("rerank_score") or 0.0), 4),
                 "is_context_expansion": bool(c.get("is_context_expansion", False)),
+                "is_dependency_neighbor": bool(c.get("is_dependency_neighbor", False)),
                 "content": c.get("content", ""),
             }
             for c in turn.retrieval.chunks
