@@ -233,7 +233,9 @@ class DependencyAnalyzer:
                         if c.type in {"import_clause", "export_clause"}:
                             collect_identifiers(c, syms)
                     imports.append((spec, syms))
-                return
+                    return
+                if node.type == "import_statement":
+                    return
 
             if node.type == "call_expression":
                 fn = node.children[0] if node.children else None
