@@ -4,8 +4,12 @@ import uuid
 from supabase import Client, create_client
 from config import settings
 from ingestion.chunker import CodeChunk, build_search_text, split_identifier_tokens
+from ingestion.dependency import DependencyAnalyzer
 from ingestion.embedder import EmbeddedChunk, NvidiaEmbedder
+from ingestion.loader import LoadedFile
 from ingestion.summarizer import RepoSummarizer
+
+_DEP_COLUMNS = ("imports", "imported_by", "calls", "called_by", "inherits_from")
 
 
 class SupabaseVectorStore:
@@ -105,6 +109,11 @@ class SupabaseVectorStore:
                 "node_type": item.chunk.node_type,
                 "parent_class": item.chunk.parent_class,
                 "symbol_name": item.chunk.symbol_name,
+                "imports": item.chunk.imports,
+                "imported_by": item.chunk.imported_by,
+                "calls": item.chunk.calls,
+                "called_by": item.chunk.called_by,
+                "inherits_from": item.chunk.inherits_from,
                 "search_text": build_search_text(item.chunk),
                 "embedding": item.embedding,
             }
@@ -112,9 +121,24 @@ class SupabaseVectorStore:
         ]
 
         inserted = 0
+        include_dep_cols = True
         for start in range(0, len(rows), self.batch_size):
             batch = rows[start : start + self.batch_size]
-            self.client.table("code_chunks").insert(batch).execute()
+            payload = (
+                batch
+                if include_dep_cols
+                else [{k: v for k, v in r.items() if k not in _DEP_COLUMNS} for r in batch]
+            )
+            try:
+                self.client.table("code_chunks").insert(payload).execute()
+            except Exception as exc:
+                err_msg = str(exc)
+                if include_dep_cols and any(col in err_msg for col in _DEP_COLUMNS):
+                    include_dep_cols = False
+                    fallback_payload = [{k: v for k, v in r.items() if k not in _DEP_COLUMNS} for r in batch]
+                    self.client.table("code_chunks").insert(fallback_payload).execute()
+                else:
+                    raise
             inserted += len(batch)
         return inserted
 
@@ -125,20 +149,26 @@ class SupabaseVectorStore:
         embedder: NvidiaEmbedder | None = None,
         branch: str = "main",
         *,
+        files: list[LoadedFile] | None = None,
+        dependency_analyzer: DependencyAnalyzer | None = None,
         include_summaries: bool = True,
         summarizer: RepoSummarizer | None = None,
         llm_summaries: bool = False,
     ) -> str:
-        """Embeds chunks (plus optional file/repo summaries), stores them under a new run, and activates it."""
+        """Analyzes dependencies, embeds chunks (plus summaries), stores them under a new run, and activates it."""
         active_embedder = embedder or NvidiaEmbedder()
         repo_id = self.get_or_create_repository(repo_url=repo_url, branch=branch)
         run_id = str(uuid.uuid4())
 
         all_chunks = list(chunks)
+        if all_chunks:
+            analyzer = dependency_analyzer or DependencyAnalyzer()
+            analyzer.analyze(all_chunks, files=files)
+
         repo_summary = ""
-        if include_summaries and chunks:
+        if include_summaries and all_chunks:
             active_summarizer = summarizer or RepoSummarizer()
-            file_summaries = active_summarizer.build_file_summary_chunks(chunks, use_llm=llm_summaries)
+            file_summaries = active_summarizer.build_file_summary_chunks(all_chunks, use_llm=llm_summaries)
             all_chunks.extend(file_summaries)
             repo_summary = active_summarizer.build_repo_summary(
                 repo_url=repo_url,
@@ -206,9 +236,11 @@ class SupabaseVectorStore:
         repo_id: str,
         file_paths: list[str],
         parent_classes: list[str],
+        dependency_symbols: list[str] | None = None,
+        max_dependency_chunks: int = 4,
     ) -> list[dict[str, Any]]:
-        """Fetches module_preamble and class_header chunks for the given files/classes to expand context."""
-        if not file_paths:
+        """Fetches module_preamble, class_header, and 1-hop dependency neighbor chunks for top hits."""
+        if not file_paths and not dependency_symbols:
             return []
         repo = self.get_repository(repo_id)
         active_run_id = repo.get("active_run_id") if repo else None
@@ -216,23 +248,88 @@ class SupabaseVectorStore:
             return []
 
         cols = "id,repo_id,file_path,content,start_line,end_line,node_type,parent_class,symbol_name"
-        res = (
-            self.client.table("code_chunks")
-            .select(cols)
-            .eq("repo_id", repo_id)
-            .eq("run_id", active_run_id)
-            .in_("file_path", list(set(file_paths)))
-            .in_("node_type", ["module_preamble", "class_header"])
-            .execute()
-        )
-        rows = list(res.data or [])
-        class_set = set(parent_classes)
-        return [
-            r
-            for r in rows
-            if r.get("node_type") == "module_preamble"
-            or (r.get("node_type") == "class_header" and r.get("parent_class") in class_set)
-        ]
+        neighbors: list[dict[str, Any]] = []
+
+        if file_paths:
+            res = (
+                self.client.table("code_chunks")
+                .select(cols)
+                .eq("repo_id", repo_id)
+                .eq("run_id", active_run_id)
+                .in_("file_path", list(dict.fromkeys(file_paths)))
+                .in_("node_type", ["module_preamble", "class_header"])
+                .execute()
+            )
+            rows = list(res.data or [])
+            class_set = set(parent_classes)
+            neighbors.extend(
+                r
+                for r in rows
+                if r.get("node_type") == "module_preamble"
+                or (r.get("node_type") == "class_header" and r.get("parent_class") in class_set)
+            )
+
+        if dependency_symbols and max_dependency_chunks > 0:
+            # Parse "ClassName.method_name" or bare "symbol_name" while preserving priority order
+            ordered_specs: list[tuple[str, str]] = []  # (parent_class_hint, bare_symbol)
+            lookup_names: list[str] = []
+            for raw_sym in dependency_symbols:
+                cleaned = raw_sym.strip()
+                if not cleaned:
+                    continue
+                if "." in cleaned:
+                    cls_hint, bare = cleaned.split(".", 1)
+                else:
+                    cls_hint, bare = "", cleaned
+                ordered_specs.append((cls_hint, bare))
+                if bare not in lookup_names:
+                    lookup_names.append(bare)
+                if cls_hint and cls_hint not in lookup_names:
+                    lookup_names.append(cls_hint)
+
+            if lookup_names:
+                dep_res = (
+                    self.client.table("code_chunks")
+                    .select(cols)
+                    .eq("repo_id", repo_id)
+                    .eq("run_id", active_run_id)
+                    .in_("symbol_name", lookup_names[:24])
+                    .in_("node_type", ["function", "method", "class"])
+                    .execute()
+                )
+                dep_rows = list(dep_res.data or [])
+                selected_deps: list[dict[str, Any]] = []
+                seen_dep_keys: set[tuple[str, int, int]] = set()
+
+                for cls_hint, bare in ordered_specs:
+                    if len(selected_deps) >= max_dependency_chunks:
+                        break
+                    for row in dep_rows:
+                        if len(selected_deps) >= max_dependency_chunks:
+                            break
+                        row_sym = str(row.get("symbol_name") or "")
+                        row_cls = str(row.get("parent_class") or "")
+                        matched = (
+                            (row_sym == bare and (not cls_hint or row_cls == cls_hint))
+                            or (cls_hint and row.get("node_type") == "class" and row_sym == cls_hint)
+                        )
+                        if not matched:
+                            continue
+                        key = (
+                            str(row.get("file_path") or ""),
+                            int(row.get("start_line") or 0),
+                            int(row.get("end_line") or 0),
+                        )
+                        if key in seen_dep_keys:
+                            continue
+                        seen_dep_keys.add(key)
+                        dep_copy = dict(row)
+                        dep_copy["is_dependency_neighbor"] = True
+                        selected_deps.append(dep_copy)
+
+                neighbors.extend(selected_deps)
+
+        return neighbors
 
     def fetch_chunks_by_ids(self, chunk_ids: list[int]) -> list[dict[str, Any]]:
         """Re-fetches specific chunks by primary key (used to carry over cited chunks across chat turns)."""
