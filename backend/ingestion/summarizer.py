@@ -1,6 +1,6 @@
 from collections import defaultdict
 from pathlib import Path
-from ingestion.chunker import CodeChunk
+from ingestion.chunker import SYNTHETIC_HEADER_PREFIXES, CodeChunk
 from retrieval.llm import NvidiaChatClient
 
 
@@ -9,7 +9,7 @@ def _extract_signature_and_doc(chunk: CodeChunk) -> str:
     code_lines = [
         line.strip()
         for line in chunk.content.splitlines()
-        if line.strip() and not line.startswith("# File:") and not line.startswith("# Class:")
+        if line.strip() and not line.startswith(SYNTHETIC_HEADER_PREFIXES)
     ]
     if not code_lines:
         return chunk.symbol_name or chunk.node_type
@@ -38,17 +38,22 @@ def build_file_outline(file_path: str, file_chunks: list[CodeChunk]) -> str:
     functions: list[str] = []
     methods_by_class: dict[str, list[str]] = defaultdict(list)
     preamble_preview: list[str] = []
+    repo_imports = list(file_chunks[0].imports)
+    imported_by = list(file_chunks[0].imported_by)
 
     for c in file_chunks:
         if c.node_type == "module_preamble" and not preamble_preview:
             lines = [
                 l.strip()
                 for l in c.content.splitlines()
-                if l.strip() and not l.startswith("# File:")
+                if l.strip() and not l.startswith(SYNTHETIC_HEADER_PREFIXES)
             ]
             preamble_preview = lines[:6]
         elif c.node_type in {"class", "class_header"}:
-            classes.append(_extract_signature_and_doc(c))
+            sig = _extract_signature_and_doc(c)
+            if c.inherits_from:
+                sig += f" (inherits {', '.join(c.inherits_from)})"
+            classes.append(sig)
         elif c.node_type == "function":
             functions.append(_extract_signature_and_doc(c))
         elif c.node_type == "method":
@@ -56,6 +61,10 @@ def build_file_outline(file_path: str, file_chunks: list[CodeChunk]) -> str:
             methods_by_class[parent].append(c.symbol_name or _extract_signature_and_doc(c))
 
     parts = [f"# File Summary: {file_path}"]
+    if repo_imports:
+        parts.append("Repo Imports: " + ", ".join(repo_imports[:8]))
+    if imported_by:
+        parts.append("Imported By: " + ", ".join(imported_by[:8]))
     if preamble_preview:
         parts.append("Imports/Setup: " + "; ".join(preamble_preview[:4]))
     if classes:
@@ -72,7 +81,7 @@ def build_file_outline(file_path: str, file_chunks: list[CodeChunk]) -> str:
         preview = [
             l.strip()
             for l in first_chunk.content.splitlines()
-            if l.strip() and not l.startswith("# File:")
+            if l.strip() and not l.startswith(SYNTHETIC_HEADER_PREFIXES)
         ][:8]
         parts.append("Preview: " + " / ".join(preview))
 
@@ -152,6 +161,8 @@ class RepoSummarizer:
                     node_type="file_summary",
                     parent_class="",
                     symbol_name=Path(fp).name,
+                    imports=list(f_chunks[0].imports),
+                    imported_by=list(f_chunks[0].imported_by),
                 )
             )
         return summary_chunks
