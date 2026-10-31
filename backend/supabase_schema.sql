@@ -22,7 +22,7 @@ alter table public.repositories add column if not exists embed_model text;
 alter table public.repositories add column if not exists embedding_dim integer;
 alter table public.repositories add column if not exists repo_summary text not null default '';
 
--- 3. Code chunks table (AST chunks, file summaries, symbol metadata, FTS tsvector, and 1024-dim vector)
+-- 3. Code chunks table (AST chunks, file summaries, symbol metadata, dependency graph, FTS tsvector, and 1024-dim vector)
 create table if not exists public.code_chunks (
     id bigserial primary key,
     repo_id uuid not null references public.repositories(id) on delete cascade,
@@ -34,6 +34,11 @@ create table if not exists public.code_chunks (
     node_type text not null,
     parent_class text not null default '',
     symbol_name text not null default '',
+    imports text[] not null default '{}',
+    imported_by text[] not null default '{}',
+    calls text[] not null default '{}',
+    called_by text[] not null default '{}',
+    inherits_from text[] not null default '{}',
     search_text text not null default '',
     fts tsvector generated always as (to_tsvector('english', search_text)) stored,
     embedding vector(1024) not null,
@@ -42,6 +47,11 @@ create table if not exists public.code_chunks (
 
 alter table public.code_chunks add column if not exists run_id uuid;
 alter table public.code_chunks add column if not exists symbol_name text not null default '';
+alter table public.code_chunks add column if not exists imports text[] not null default '{}';
+alter table public.code_chunks add column if not exists imported_by text[] not null default '{}';
+alter table public.code_chunks add column if not exists calls text[] not null default '{}';
+alter table public.code_chunks add column if not exists called_by text[] not null default '{}';
+alter table public.code_chunks add column if not exists inherits_from text[] not null default '{}';
 alter table public.code_chunks add column if not exists search_text text not null default '';
 alter table public.code_chunks add column if not exists fts tsvector
     generated always as (to_tsvector('english', search_text)) stored;
@@ -81,6 +91,8 @@ create index if not exists idx_messages_conversation_id on public.messages(conve
 
 -- 6. Unified Hybrid Search RPC: Reciprocal Rank Fusion (RRF) combining pgvector semantic search
 --    + Postgres full-text keyword search
+drop function if exists public.hybrid_search_code_chunks(vector, text, uuid, int, int);
+
 create or replace function public.hybrid_search_code_chunks(
     query_embedding vector(1024),
     query_text text,
@@ -98,6 +110,11 @@ returns table (
     node_type text,
     parent_class text,
     symbol_name text,
+    imports text[],
+    imported_by text[],
+    calls text[],
+    called_by text[],
+    inherits_from text[],
     similarity float,
     fts_rank float,
     rrf_score float
@@ -163,6 +180,11 @@ as $$
         ac.node_type,
         ac.parent_class,
         ac.symbol_name,
+        ac.imports,
+        ac.imported_by,
+        ac.calls,
+        ac.called_by,
+        ac.inherits_from,
         f.similarity,
         f.fts_rank,
         f.rrf_score
