@@ -2,7 +2,7 @@ from collections import defaultdict
 import re
 from typing import Any
 from config import settings
-from ingestion.chunker import split_identifier_tokens
+from ingestion.chunker import SYNTHETIC_HEADER_PREFIXES, split_identifier_tokens
 from retrieval.query_router import QueryPlan
 
 _WORD_RE = re.compile(r"[a-z0-9]{2,}")
@@ -15,11 +15,11 @@ def _tokenize(text: str) -> set[str]:
 
 
 def _strip_chunk_header(content: str) -> tuple[list[str], list[str]]:
-    """Splits a chunk's content into (# File / # Class header lines, raw code lines)."""
+    """Splits a chunk's content into (synthetic header lines, raw code lines)."""
     headers: list[str] = []
     body: list[str] = []
     for line in content.splitlines():
-        if not body and (line.startswith("# File:") or line.startswith("# Class:") or line.startswith("# Function:")):
+        if not body and line.startswith(SYNTHETIC_HEADER_PREFIXES):
             headers.append(line)
         else:
             body.append(line)
@@ -232,7 +232,14 @@ class ContextAssembler:
             nb_copy["is_context_expansion"] = True
             supporting.append(nb_copy)
 
-        supporting.sort(key=lambda x: 0 if x.get("node_type") == "class_header" else 1)
+        def _support_priority(item: dict[str, Any]) -> int:
+            if item.get("node_type") == "class_header":
+                return 0
+            if item.get("is_dependency_neighbor") or item.get("node_type") in {"function", "method", "class"}:
+                return 1
+            return 2
+
+        supporting.sort(key=_support_priority)
 
         char_budget = self.token_budget * 4
         used_chars = 0
