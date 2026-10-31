@@ -35,7 +35,12 @@ class RetrievalResult:
                 start_l = c.get("start_line", 1)
                 end_l = c.get("end_line", start_l)
                 kind = c.get("node_type", "code")
-                tag = "context header" if c.get("is_context_expansion") else kind
+                if c.get("is_dependency_neighbor"):
+                    tag = f"1-hop dependency {kind}"
+                elif c.get("is_context_expansion"):
+                    tag = "context header"
+                else:
+                    tag = kind
                 chunk_blocks.append(
                     f"### [{idx}] {fp}:L{start_l}-L{end_l} ({tag})\n```\n{c.get('content', '').strip()}\n```"
                 )
@@ -63,6 +68,49 @@ class CodebaseRetriever:
         self.reranker = reranker or CodeReranker()
         self.assembler = assembler or ContextAssembler()
         self.candidate_pool = candidate_pool or settings.RETRIEVAL_CANDIDATE_POOL
+
+    @staticmethod
+    def _extract_dependency_symbols(chunks: list[dict[str, Any]], max_primary: int = 3) -> list[str]:
+        """Collects 1-hop callees, callers, and base classes from the top primary chunks."""
+        primary_symbols = {
+            str(c.get("symbol_name") or "")
+            for c in chunks
+            if c.get("symbol_name") and c.get("node_type") in {"function", "method", "class"}
+        }
+        ordered: list[str] = []
+        seen: set[str] = set()
+
+        for c in chunks[:max_primary]:
+            raw_edges: list[str] = []
+            for field_name in ("calls", "called_by", "inherits_from"):
+                val = c.get(field_name)
+                if isinstance(val, list):
+                    raw_edges.extend(str(item) for item in val if item)
+
+            # Fallback: parse `# Calls:`, `# Called by:`, `# Inherits from:` from chunk header lines
+            if not raw_edges:
+                for line in str(c.get("content") or "").splitlines()[:6]:
+                    if not (
+                        line.startswith("# Calls:")
+                        or line.startswith("# Called by:")
+                        or line.startswith("# Inherits from:")
+                    ):
+                        continue
+                    for segment in line.split("|"):
+                        seg = segment.strip()
+                        for prefix in ("# Calls:", "# Called by:", "# Inherits from:"):
+                            if seg.startswith(prefix):
+                                items = [s.strip() for s in seg[len(prefix) :].split(",") if s.strip()]
+                                raw_edges.extend(items)
+
+            for sym in raw_edges:
+                bare = sym.split(".")[-1]
+                if not bare or bare in primary_symbols or sym in seen:
+                    continue
+                seen.add(sym)
+                ordered.append(sym)
+
+        return ordered
 
     def retrieve(
         self,
@@ -100,7 +148,7 @@ class CodebaseRetriever:
         # 3. Rerank and apply per-file diversity caps
         top_chunks = self.reranker.rerank(candidates, plan=plan, carryover_ids=carry_set)
 
-        # 4. Expand context with enclosing class headers and file preambles
+        # 4. Expand context with enclosing class headers, file preambles, and 1-hop dependency neighbors (capped at 4)
         neighbors: list[dict[str, Any]] = []
         if repo_id and top_chunks:
             matched_files = [str(c["file_path"]) for c in top_chunks if c.get("file_path")]
@@ -109,10 +157,13 @@ class CodebaseRetriever:
                 for c in top_chunks
                 if c.get("node_type") == "method" and c.get("parent_class")
             ]
+            dep_symbols = self._extract_dependency_symbols(top_chunks, max_primary=3)
             neighbors = self.store.fetch_context_neighbors(
                 repo_id=repo_id,
                 file_paths=matched_files,
                 parent_classes=matched_classes,
+                dependency_symbols=dep_symbols,
+                max_dependency_chunks=4,
             )
 
         # 5. Merge overlapping spans and enforce token budget
