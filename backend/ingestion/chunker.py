@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
 from tree_sitter import Language, Parser
 import tree_sitter_javascript as tsjs
@@ -33,6 +33,17 @@ _CAMEL_BOUNDARY_1 = re.compile(r"([a-z0-9])([A-Z])")
 _CAMEL_BOUNDARY_2 = re.compile(r"([A-Z]+)([A-Z][a-z])")
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}")
 
+SYNTHETIC_HEADER_PREFIXES = (
+    "# File:",
+    "# Class:",
+    "# Function:",
+    "# Imports:",
+    "# Imported by:",
+    "# Inherits from:",
+    "# Calls:",
+    "# Called by:",
+)
+
 
 def split_identifier_tokens(text: str) -> str:
     """Expands camelCase, PascalCase, and snake_case identifiers into space-separated words for FTS."""
@@ -59,19 +70,30 @@ class CodeChunk:
     node_type: str         # "method", "function", "class", "class_header", "module_preamble", "text", "file_summary"
     parent_class: str = "" # e.g., "UserRepository"
     symbol_name: str = ""  # e.g., "get_user", "UserRepository"
+    imports: list[str] = field(default_factory=list)       # Resolved repo file_paths imported by this file
+    imported_by: list[str] = field(default_factory=list)   # Resolved repo file_paths that import this file
+    calls: list[str] = field(default_factory=list)         # Repo symbol_names called inside this chunk
+    called_by: list[str] = field(default_factory=list)     # Repo symbol_names that call this chunk's symbol
+    inherits_from: list[str] = field(default_factory=list) # Base class names this class/method inherits from
 
 
 def build_search_text(chunk: CodeChunk) -> str:
-    """Builds keyword-rich text combining file path, symbols, split identifiers, and content for hybrid FTS."""
+    """Builds keyword-rich text combining file path, symbols, dependency edges, split identifiers, and content."""
     path_words = re.sub(r"[/._\-]+", " ", chunk.file_path)
+    raw_dep_symbols = " ".join(chunk.calls + chunk.called_by + chunk.inherits_from)
+    dep_symbols = re.sub(r"[.]+", " ", raw_dep_symbols)
+    dep_files = " ".join(chunk.imports + chunk.imported_by)
     split_tokens = split_identifier_tokens(
-        f"{chunk.file_path} {chunk.parent_class} {chunk.symbol_name} {chunk.content}"
+        f"{chunk.file_path} {chunk.parent_class} {chunk.symbol_name} {dep_symbols} {chunk.content}"
     )
     parts = [
         chunk.file_path,
         path_words,
         chunk.parent_class,
         chunk.symbol_name,
+        raw_dep_symbols,
+        dep_symbols,
+        dep_files,
         split_tokens,
         chunk.content,
     ]
