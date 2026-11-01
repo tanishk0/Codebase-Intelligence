@@ -81,14 +81,12 @@ class CodebaseRetriever:
         seen: set[str] = set()
 
         for c in chunks[:max_primary]:
-            raw_edges: list[str] = []
-            for field_name in ("calls", "called_by", "inherits_from"):
-                val = c.get(field_name)
-                if isinstance(val, list):
-                    raw_edges.extend(str(item) for item in val if item)
+            calls_list = [str(x) for x in (c.get("calls") or []) if x]
+            called_by_list = [str(x) for x in (c.get("called_by") or []) if x]
+            inherits_list = [str(x) for x in (c.get("inherits_from") or []) if x]
 
             # Fallback: parse `# Calls:`, `# Called by:`, `# Inherits from:` from chunk header lines
-            if not raw_edges:
+            if not (calls_list or called_by_list or inherits_list):
                 for line in str(c.get("content") or "").splitlines()[:6]:
                     if not (
                         line.startswith("# Calls:")
@@ -98,10 +96,27 @@ class CodebaseRetriever:
                         continue
                     for segment in line.split("|"):
                         seg = segment.strip()
-                        for prefix in ("# Calls:", "# Called by:", "# Inherits from:"):
-                            if seg.startswith(prefix):
-                                items = [s.strip() for s in seg[len(prefix) :].split(",") if s.strip()]
-                                raw_edges.extend(items)
+                        if seg.startswith("# Calls:"):
+                            calls_list.extend(s.strip() for s in seg[len("# Calls:") :].split(",") if s.strip())
+                        elif seg.startswith("# Called by:"):
+                            called_by_list.extend(
+                                s.strip() for s in seg[len("# Called by:") :].split(",") if s.strip()
+                            )
+                        elif seg.startswith("# Inherits from:"):
+                            inherits_list.extend(
+                                s.strip() for s in seg[len("# Inherits from:") :].split(",") if s.strip()
+                            )
+
+            # Interleave callers, base classes, and callees so a long `calls` list never starves `called_by`
+            raw_edges: list[str] = []
+            max_len = max(len(called_by_list), len(inherits_list), len(calls_list), 0)
+            for idx in range(max_len):
+                if idx < len(called_by_list):
+                    raw_edges.append(called_by_list[idx])
+                if idx < len(inherits_list):
+                    raw_edges.append(inherits_list[idx])
+                if idx < len(calls_list):
+                    raw_edges.append(calls_list[idx])
 
             for sym in raw_edges:
                 bare = sym.split(".")[-1]
