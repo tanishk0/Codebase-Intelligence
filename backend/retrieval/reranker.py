@@ -2,28 +2,17 @@ from collections import defaultdict
 import re
 from typing import Any
 from config import settings
-from ingestion.chunker import SYNTHETIC_HEADER_PREFIXES, split_identifier_tokens
+from ingestion.chunker import split_chunk_headers, split_identifier_tokens
 from retrieval.query_router import QueryPlan
 
 _WORD_RE = re.compile(r"[a-z0-9]{2,}")
 _TEST_FILE_RE = re.compile(r"(^|/)(tests?|__tests__|spec|fixtures?|mocks?)/|(\.|_)test\.|(\.|_)spec\.", re.IGNORECASE)
+_strip_chunk_header = split_chunk_header = split_chunk_headers
 
 
 def _tokenize(text: str) -> set[str]:
     expanded = f"{text} {split_identifier_tokens(text)}".lower()
     return set(_WORD_RE.findall(expanded))
-
-
-def _strip_chunk_header(content: str) -> tuple[list[str], list[str]]:
-    """Splits a chunk's content into (synthetic header lines, raw code lines)."""
-    headers: list[str] = []
-    body: list[str] = []
-    for line in content.splitlines():
-        if not body and line.startswith(SYNTHETIC_HEADER_PREFIXES):
-            headers.append(line)
-        else:
-            body.append(line)
-    return headers, body
 
 
 class CodeReranker:
