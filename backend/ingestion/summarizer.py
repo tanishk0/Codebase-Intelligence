@@ -1,22 +1,17 @@
 from collections import defaultdict
 from pathlib import Path
-from ingestion.chunker import SYNTHETIC_HEADER_PREFIXES, CodeChunk
+from ingestion.chunker import CodeChunk
 from retrieval.llm import NvidiaChatClient
 
 
 def _extract_signature_and_doc(chunk: CodeChunk) -> str:
     """Extracts the declaration signature and first docstring line from a code chunk."""
-    code_lines = [
-        line.strip()
-        for line in chunk.content.splitlines()
-        if line.strip() and not line.startswith(SYNTHETIC_HEADER_PREFIXES)
-    ]
+    code_lines = [line.strip() for line in chunk.code_lines() if line.strip()]
     if not code_lines:
         return chunk.symbol_name or chunk.node_type
 
     # Find first non-decorator signature line
-    sig = next((l for l in code_lines if not l.startswith("@")), code_lines[0])
-    sig = sig[:120]
+    sig = next((l for l in code_lines if not l.startswith("@")), code_lines[0])[:120]
 
     # Look for a docstring line right after the signature
     doc = ""
@@ -43,12 +38,7 @@ def build_file_outline(file_path: str, file_chunks: list[CodeChunk]) -> str:
 
     for c in file_chunks:
         if c.node_type == "module_preamble" and not preamble_preview:
-            lines = [
-                l.strip()
-                for l in c.content.splitlines()
-                if l.strip() and not l.startswith(SYNTHETIC_HEADER_PREFIXES)
-            ]
-            preamble_preview = lines[:6]
+            preamble_preview = [l.strip() for l in c.code_lines() if l.strip()][:6]
         elif c.node_type in {"class", "class_header"}:
             sig = _extract_signature_and_doc(c)
             if c.inherits_from:
@@ -77,12 +67,7 @@ def build_file_outline(file_path: str, file_chunks: list[CodeChunk]) -> str:
 
     # Fallback for non-AST files (Markdown, configs, JSON)
     if len(parts) == 1:
-        first_chunk = file_chunks[0]
-        preview = [
-            l.strip()
-            for l in first_chunk.content.splitlines()
-            if l.strip() and not l.startswith(SYNTHETIC_HEADER_PREFIXES)
-        ][:8]
+        preview = [l.strip() for l in file_chunks[0].code_lines() if l.strip()][:8]
         parts.append("Preview: " + " / ".join(preview))
 
     return "\n".join(parts)
