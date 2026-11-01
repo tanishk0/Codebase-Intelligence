@@ -137,7 +137,7 @@ class ConversationalRAGEngine:
             {
                 "role": "system",
                 "content": (
-                    "Update the running conversation summary in 2-4 concise sentences, "
+                    "Update the running conversation summary in 6-7 concise sentences, "
                     "preserving exact file paths, class names, and function names discussed."
                 ),
             },
