@@ -1,57 +1,55 @@
 from collections import defaultdict
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from tree_sitter import Parser
-from ingestion.chunker import JS_TS_PARSERS, SYNTHETIC_HEADER_PREFIXES, CodeChunk, py_parser
+from ingestion.chunker import JS_TS_PARSERS, CodeChunk, get_node_text, py_parser
 from ingestion.loader import LoadedFile
 
 CODE_EXTENSIONS = (".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts")
 BARREL_FILES = ("__init__.py", "index.ts", "index.tsx", "index.js", "index.jsx")
 IGNORED_CALL_NAMES = {
-    "__init__",
-    "__new__",
-    "__str__",
-    "__repr__",
-    "constructor",
-    "super",
-    "print",
-    "len",
-    "str",
-    "int",
-    "float",
-    "bool",
-    "list",
-    "dict",
-    "set",
-    "tuple",
-    "range",
-    "enumerate",
-    "zip",
-    "min",
-    "max",
-    "sum",
-    "sorted",
-    "any",
-    "all",
-    "isinstance",
-    "getattr",
-    "setattr",
-    "hasattr",
-    "next",
-    "iter",
-    "open",
+    # Lifecycle & constructors
+    "__init__", "__new__", "__str__", "__repr__", "constructor", "super",
+    # Python built-in functions
+    "print", "len", "str", "int", "float", "bool", "list", "dict", "set",
+    "tuple", "range", "enumerate", "zip", "min", "max", "sum", "sorted",
+    "any", "all", "isinstance", "getattr", "setattr", "hasattr", "next",
+    "iter", "open",
+    # Common built-in container/string methods (prevents false edges on dict.get, list.append, etc.)
+    "get", "append", "extend", "update", "pop", "split", "strip", "lstrip",
+    "rstrip", "replace", "join", "items", "keys", "values", "lower", "upper",
+    "startswith", "endswith", "encode", "decode", "format", "splitlines",
+    "add", "remove", "clear", "copy", "count", "sort", "reverse",
+    "push", "slice", "splice", "map", "filter", "reduce", "forEach", "includes", "trim",
 }
-
-
-def _node_text(node, code_bytes: bytes) -> str:
-    return code_bytes[node.start_byte : node.end_byte].decode("utf8", errors="ignore")
 
 
 def _strip_quotes(raw: str) -> str:
     return raw.strip().strip("\"'`")
 
 
+def _collect_identifiers(node, code_bytes: bytes, out: list[str], *, allow_this: bool = False) -> None:
+    """Recursively collects identifier texts inside an AST subtree in source order."""
+    types = {"identifier", "type_identifier", "property_identifier"}
+    if allow_this:
+        types.add("this")
+    if node.type in types:
+        out.append(get_node_text(node, code_bytes))
+        return
+    for child in node.children:
+        _collect_identifiers(child, code_bytes, out, allow_this=allow_this)
+
+
+@dataclass
+class _FileASTSummary:
+    raw_imports: list[tuple[str, list[str]]] = field(default_factory=list)
+    inheritance: dict[str, list[str]] = field(default_factory=lambda: defaultdict(list))
+    class_methods: dict[str, list[str]] = field(default_factory=lambda: defaultdict(list))
+    calls: list[tuple[int, str, str]] = field(default_factory=list)  # (line_number, receiver, callee)
+
+
 class DependencyAnalyzer:
-    """Extracts file imports, class inheritance, and function/method call graphs using Tree-sitter ASTs."""
+    """Single-pass Tree-sitter analyzer for file imports, class inheritance, and function/method call graphs."""
 
     def _resolve_import_specifier(
         self,
@@ -104,7 +102,6 @@ class DependencyAnalyzer:
         # 4. Standard module path (Python dotted `ingestion.chunker` or JS bare/root path)
         else:
             slash_path = specifier.replace(".", "/") if "/" not in specifier else specifier
-            # Try from repo root and from each ancestor package directory of importing_file (e.g. backend/)
             ancestors: list[PurePosixPath] = [PurePosixPath(".")]
             cur = importer_dir
             while str(cur) not in {"", "."}:
@@ -125,318 +122,216 @@ class DependencyAnalyzer:
             if not base_str:
                 continue
 
-            # Exact match (when extension is already in specifier)
-            if base_str in all_files and base_str != importing_file and base_str not in seen:
-                seen.add(base_str)
-                resolved.append(base_str)
-                continue
+            candidates = [base_str]
+            candidates.extend(f"{base_str}{ext}" for ext in CODE_EXTENSIONS)
+            candidates.extend(f"{base_str}/{barrel}" for barrel in BARREL_FILES)
 
-            # Probe known code extensions
-            for ext in CODE_EXTENSIONS:
-                with_ext = f"{base_str}{ext}"
-                if with_ext in all_files and with_ext != importing_file and with_ext not in seen:
-                    seen.add(with_ext)
-                    resolved.append(with_ext)
-
-            # Probe barrel files (index.ts, __init__.py, etc.)
-            for barrel in BARREL_FILES:
-                barrel_path = f"{base_str}/{barrel}"
-                if barrel_path in all_files and barrel_path != importing_file and barrel_path not in seen:
-                    seen.add(barrel_path)
-                    resolved.append(barrel_path)
+            for cand in candidates:
+                if cand in all_files and cand != importing_file and cand not in seen:
+                    seen.add(cand)
+                    resolved.append(cand)
 
         return resolved
 
-    def _extract_python_file_relations(
-        self, code_bytes: bytes
-    ) -> tuple[list[tuple[str, list[str]]], dict[str, list[str]]]:
-        """Returns ([(module_specifier, [imported_symbols])], {class_name: [base_classes]})."""
-        tree = py_parser.parse(code_bytes)
-        imports: list[tuple[str, list[str]]] = []
-        inheritance: dict[str, list[str]] = defaultdict(list)
+    def _parse_file_ast(self, code_bytes: bytes, parser: Parser, is_python: bool) -> _FileASTSummary:
+        """Single-pass AST walk extracting imports, inheritance, class methods, and line-tagged calls."""
+        tree = parser.parse(code_bytes)
+        summary = _FileASTSummary()
 
-        def visit(node) -> None:
-            if node.type == "import_statement":
+        def visit(node, current_class: str = "") -> None:
+            ntype = node.type
+
+            # --- 1. Imports ---
+            if is_python and ntype == "import_statement":
                 for child in node.children:
                     if child.type == "dotted_name":
-                        imports.append((_node_text(child, code_bytes), []))
+                        summary.raw_imports.append((get_node_text(child, code_bytes), []))
                     elif child.type == "aliased_import":
                         dotted = next((c for c in child.children if c.type == "dotted_name"), None)
                         if dotted:
-                            imports.append((_node_text(dotted, code_bytes), []))
+                            summary.raw_imports.append((get_node_text(dotted, code_bytes), []))
                 return
 
-            if node.type == "import_from_statement":
-                module_spec = ""
-                imported_syms: list[str] = []
-                seen_import_kw = False
+            if is_python and ntype == "import_from_statement":
+                module_spec, imported_syms, seen_import_kw = "", [], False
                 for child in node.children:
                     if child.type == "import":
                         seen_import_kw = True
                     elif not seen_import_kw and child.type in {"dotted_name", "relative_import"}:
-                        module_spec = _node_text(child, code_bytes)
+                        module_spec = get_node_text(child, code_bytes)
                     elif seen_import_kw:
                         if child.type == "dotted_name":
-                            imported_syms.append(_node_text(child, code_bytes))
+                            imported_syms.append(get_node_text(child, code_bytes))
                         elif child.type == "aliased_import":
                             orig = next((c for c in child.children if c.type == "dotted_name"), None)
                             if orig:
-                                imported_syms.append(_node_text(orig, code_bytes))
-                imports.append((module_spec, imported_syms))
+                                imported_syms.append(get_node_text(orig, code_bytes))
+                summary.raw_imports.append((module_spec, imported_syms))
                 return
 
-            if node.type == "class_definition":
-                cls_id = next((c for c in node.children if c.type == "identifier"), None)
-                arg_list = next((c for c in node.children if c.type == "argument_list"), None)
-                if cls_id and arg_list:
-                    cls_name = _node_text(cls_id, code_bytes)
-                    for arg in arg_list.children:
-                        if arg.type == "identifier":
-                            inheritance[cls_name].append(_node_text(arg, code_bytes))
-                        elif arg.type == "attribute":
-                            ident_children = [c for c in arg.children if c.type == "identifier"]
-                            if ident_children:
-                                inheritance[cls_name].append(_node_text(ident_children[-1], code_bytes))
-                        elif arg.type == "subscript":
-                            base_id = next((c for c in arg.children if c.type == "identifier"), None)
-                            if base_id:
-                                inheritance[cls_name].append(_node_text(base_id, code_bytes))
-
-            for child in node.children:
-                visit(child)
-
-        visit(tree.root_node)
-        return imports, inheritance
-
-    def _extract_js_ts_file_relations(
-        self, code_bytes: bytes, parser: Parser
-    ) -> tuple[list[tuple[str, list[str]]], dict[str, list[str]]]:
-        """Returns ([(module_specifier, [imported_symbols])], {class_name: [base_classes]})."""
-        tree = parser.parse(code_bytes)
-        imports: list[tuple[str, list[str]]] = []
-        inheritance: dict[str, list[str]] = defaultdict(list)
-
-        def collect_identifiers(n, out: list[str]) -> None:
-            if n.type in {"identifier", "type_identifier"}:
-                out.append(_node_text(n, code_bytes))
-                return
-            for ch in n.children:
-                collect_identifiers(ch, out)
-
-        def visit(node) -> None:
-            if node.type in {"import_statement", "export_statement"}:
+            if not is_python and ntype in {"import_statement", "export_statement"}:
                 str_node = next((c for c in node.children if c.type == "string"), None)
                 if str_node:
-                    spec = _strip_quotes(_node_text(str_node, code_bytes))
+                    spec = _strip_quotes(get_node_text(str_node, code_bytes))
                     syms: list[str] = []
                     for c in node.children:
                         if c.type in {"import_clause", "export_clause"}:
-                            collect_identifiers(c, syms)
-                    imports.append((spec, syms))
+                            _collect_identifiers(c, code_bytes, syms)
+                    summary.raw_imports.append((spec, syms))
                     return
-                if node.type == "import_statement":
+                if ntype == "import_statement":
                     return
 
-            if node.type == "call_expression":
-                fn = node.children[0] if node.children else None
-                args = next((c for c in node.children if c.type == "arguments"), None)
-                if fn and args and _node_text(fn, code_bytes) in {"require", "import"}:
-                    str_node = next((c for c in args.children if c.type == "string"), None)
-                    if str_node:
-                        imports.append((_strip_quotes(_node_text(str_node, code_bytes)), []))
-
-            if node.type in {"class_declaration", "abstract_class_declaration"}:
+            # --- 2. Classes & Inheritance ---
+            if ntype in {"class_definition", "class_declaration", "abstract_class_declaration"}:
                 cls_id = next((c for c in node.children if c.type in {"identifier", "type_identifier"}), None)
-                heritage = next((c for c in node.children if c.type == "class_heritage"), None)
-                if cls_id and heritage:
-                    cls_name = _node_text(cls_id, code_bytes)
-                    bases: list[str] = []
-                    collect_identifiers(heritage, bases)
-                    inheritance[cls_name].extend(b for b in bases if b != cls_name)
+                cls_name = get_node_text(cls_id, code_bytes) if cls_id else current_class
 
-            for child in node.children:
-                visit(child)
+                if is_python:
+                    arg_list = next((c for c in node.children if c.type == "argument_list"), None)
+                    if cls_name and arg_list:
+                        for arg in arg_list.children:
+                            if arg.type in {"identifier", "attribute", "subscript"}:
+                                tokens: list[str] = []
+                                _collect_identifiers(arg, code_bytes, tokens)
+                                if tokens:
+                                    summary.inheritance[cls_name].append(tokens[0] if arg.type == "subscript" else tokens[-1])
+                else:
+                    heritage = next((c for c in node.children if c.type == "class_heritage"), None)
+                    if cls_name and heritage:
+                        bases: list[str] = []
+                        _collect_identifiers(heritage, code_bytes, bases)
+                        summary.inheritance[cls_name].extend(b for b in bases if b != cls_name)
 
-        visit(tree.root_node)
-        return imports, inheritance
+                for child in node.children:
+                    visit(child, current_class=cls_name)
+                return
 
-    def _extract_chunk_calls(self, chunk: CodeChunk) -> list[tuple[str, str]]:
-        """Extracts (receiver, callee_name) pairs from a chunk's AST."""
-        ext = Path(chunk.file_path).suffix.lower()
-        parser = py_parser if ext == ".py" else JS_TS_PARSERS.get(ext)
-        if parser is None:
-            return []
+            # --- 3. Class method declarations (for atomic small classes) ---
+            if current_class and ntype in {"function_definition", "method_definition", "abstract_method_signature"}:
+                name_node = next((c for c in node.children if c.type in {"identifier", "property_identifier"}), None)
+                if name_node:
+                    m_name = get_node_text(name_node, code_bytes)
+                    if m_name and m_name not in IGNORED_CALL_NAMES and m_name not in summary.class_methods[current_class]:
+                        summary.class_methods[current_class].append(m_name)
 
-        # Strip synthetic `# File:` / `# Class:` / dependency header comments before parsing
-        raw_lines = [
-            line
-            for line in chunk.content.splitlines()
-            if not line.startswith(SYNTHETIC_HEADER_PREFIXES)
-        ]
-        code_bytes = "\n".join(raw_lines).encode("utf8", errors="ignore")
-        tree = parser.parse(code_bytes)
-        calls: list[tuple[str, str]] = []
-
-        def visit(node) -> None:
-            # Python call: `func(...)` or `obj.method(...)`
-            if node.type == "call":
-                func_node = node.children[0] if node.children else None
-                if func_node is not None:
-                    if func_node.type == "identifier":
-                        calls.append(("", _node_text(func_node, code_bytes)))
-                    elif func_node.type == "attribute":
-                        idents = [c for c in func_node.children if c.type == "identifier"]
-                        if len(idents) >= 2:
-                            calls.append((_node_text(idents[0], code_bytes), _node_text(idents[-1], code_bytes)))
-                        elif len(idents) == 1:
-                            calls.append(("", _node_text(idents[0], code_bytes)))
-
-            # JS/TS call_expression or `new ClassName(...)`
-            elif node.type in {"call_expression", "new_expression"}:
+            # --- 4. Call sites (handles chained `self.store.method()` accurately) ---
+            if ntype in {"call", "call_expression", "new_expression"}:
                 target = next(
                     (
                         c
                         for c in node.children
-                        if c.type in {"identifier", "type_identifier", "member_expression"}
+                        if c.type in {"identifier", "type_identifier", "attribute", "member_expression"}
                     ),
                     None,
                 )
                 if target is not None:
-                    if target.type in {"identifier", "type_identifier"}:
-                        calls.append(("", _node_text(target, code_bytes)))
-                    elif target.type == "member_expression":
-                        idents = [
-                            c
-                            for c in target.children
-                            if c.type in {"identifier", "property_identifier", "this"}
-                        ]
-                        if len(idents) >= 2:
-                            calls.append((_node_text(idents[0], code_bytes), _node_text(idents[-1], code_bytes)))
-                        elif len(idents) == 1:
-                            calls.append(("", _node_text(idents[0], code_bytes)))
+                    line_no = node.start_point[0] + 1
+                    tokens: list[str] = []
+                    _collect_identifiers(target, code_bytes, tokens, allow_this=True)
+                    if len(tokens) == 1:
+                        callee = tokens[0]
+                        if not is_python and callee in {"require", "import"}:
+                            args = next((c for c in node.children if c.type == "arguments"), None)
+                            str_node = next((c for c in (args.children if args else []) if c.type == "string"), None)
+                            if str_node:
+                                summary.raw_imports.append((_strip_quotes(get_node_text(str_node, code_bytes)), []))
+                        else:
+                            summary.calls.append((line_no, "", callee))
+                    elif len(tokens) >= 2:
+                        receiver = ".".join(tokens[:-1])
+                        summary.calls.append((line_no, receiver, tokens[-1]))
 
             for child in node.children:
-                visit(child)
+                visit(child, current_class)
 
         visit(tree.root_node)
-        return calls
+        return summary
 
     @staticmethod
     def _inject_dependency_headers(chunk: CodeChunk) -> None:
         """Inserts compact `# Imports:`, `# Inherits from:`, and `# Calls:` metadata lines into chunk.content."""
         lines = chunk.content.splitlines()
         header_end = 0
-        while header_end < len(lines) and (
-            lines[header_end].startswith("# File:")
-            or lines[header_end].startswith("# Class:")
-            or lines[header_end].startswith("# Function:")
-        ):
+        while header_end < len(lines) and lines[header_end].startswith(("# File:", "# Class:", "# Function:")):
             header_end += 1
 
-        # Remove any previous dependency header lines so re-running analyze() is idempotent
         body_start = header_end
-        while body_start < len(lines) and (
-            lines[body_start].startswith("# Imports:")
-            or lines[body_start].startswith("# Imported by:")
-            or lines[body_start].startswith("# Inherits from:")
-            or lines[body_start].startswith("# Calls:")
-            or lines[body_start].startswith("# Called by:")
+        while body_start < len(lines) and lines[body_start].startswith(
+            ("# Imports:", "# Imported by:", "# Inherits from:", "# Calls:", "# Called by:")
         ):
             body_start += 1
 
         dep_lines: list[str] = []
         if chunk.node_type in {"module_preamble", "class", "class_header"}:
-            file_parts: list[str] = []
-            if chunk.imports:
-                file_parts.append(f"# Imports: {', '.join(chunk.imports[:6])}")
-            if chunk.imported_by:
-                file_parts.append(f"# Imported by: {', '.join(chunk.imported_by[:6])}")
+            file_parts = [
+                *( [f"# Imports: {', '.join(chunk.imports[:6])}"] if chunk.imports else [] ),
+                *( [f"# Imported by: {', '.join(chunk.imported_by[:6])}"] if chunk.imported_by else [] ),
+            ]
             if file_parts:
                 dep_lines.append(" | ".join(file_parts))
 
         if chunk.inherits_from:
             dep_lines.append(f"# Inherits from: {', '.join(chunk.inherits_from)}")
 
-        call_parts: list[str] = []
-        if chunk.calls:
-            call_parts.append(f"# Calls: {', '.join(chunk.calls[:8])}")
-        if chunk.called_by:
-            call_parts.append(f"# Called by: {', '.join(chunk.called_by[:8])}")
+        call_parts = [
+            *( [f"# Calls: {', '.join(chunk.calls[:8])}"] if chunk.calls else [] ),
+            *( [f"# Called by: {', '.join(chunk.called_by[:8])}"] if chunk.called_by else [] ),
+        ]
         if call_parts:
             dep_lines.append(" | ".join(call_parts))
 
         if dep_lines:
             chunk.content = "\n".join(lines[:header_end] + dep_lines + lines[body_start:])
 
-    def _extract_atomic_class_methods(self, chunk: CodeChunk) -> list[str]:
-        """Extracts method names declared inside an atomic `class` chunk."""
-        ext = Path(chunk.file_path).suffix.lower()
-        parser = py_parser if ext == ".py" else JS_TS_PARSERS.get(ext)
-        if parser is None:
-            return []
+    @staticmethod
+    def _gather_file_sources(chunks: list[CodeChunk], files: list[LoadedFile] | None) -> dict[str, bytes]:
+        """Returns UTF-8 bytes per file, reconstructing line-accurate source if `files` is not passed."""
+        if files:
+            return {f.file_path: f.content.encode("utf8", errors="ignore") for f in files}
 
-        raw_lines = [
-            line for line in chunk.content.splitlines() if not line.startswith(SYNTHETIC_HEADER_PREFIXES)
-        ]
-        code_bytes = "\n".join(raw_lines).encode("utf8", errors="ignore")
-        tree = parser.parse(code_bytes)
-        methods: list[str] = []
+        by_file: dict[str, list[CodeChunk]] = defaultdict(list)
+        for c in chunks:
+            if c.node_type != "file_summary":
+                by_file[c.file_path].append(c)
 
-        def visit(node) -> None:
-            if node.type in {"function_definition", "method_definition", "abstract_method_signature"}:
-                name_node = next(
-                    (c for c in node.children if c.type in {"identifier", "property_identifier"}),
-                    None,
-                )
-                if name_node is not None:
-                    name = _node_text(name_node, code_bytes)
-                    if name and name not in IGNORED_CALL_NAMES and name not in methods:
-                        methods.append(name)
-            for child in node.children:
-                visit(child)
-
-        visit(tree.root_node)
-        return methods
+        sources: dict[str, bytes] = {}
+        for fp, f_chunks in by_file.items():
+            max_line = max((c.end_line for c in f_chunks), default=1)
+            buf = [""] * max_line
+            for c in f_chunks:
+                for offset, line in enumerate(c.code_lines()):
+                    idx = c.start_line - 1 + offset
+                    if 0 <= idx < max_line:
+                        buf[idx] = line
+            sources[fp] = "\n".join(buf).encode("utf8", errors="ignore")
+        return sources
 
     def analyze(self, chunks: list[CodeChunk], files: list[LoadedFile] | None = None) -> list[CodeChunk]:
         """Populates file imports, class inheritance, and function call graphs across all chunks."""
         if not chunks:
             return chunks
 
-        # 1. Gather full source per file (from LoadedFile if provided, else reconstructed from chunks)
-        file_sources: dict[str, bytes] = {}
-        if files:
-            for f in files:
-                file_sources[f.file_path] = f.content.encode("utf8", errors="ignore")
-        else:
-            by_file_lines: dict[str, list[str]] = defaultdict(list)
-            for c in chunks:
-                if c.node_type == "file_summary":
-                    continue
-                for line in c.content.splitlines():
-                    if not line.startswith(SYNTHETIC_HEADER_PREFIXES):
-                        by_file_lines[c.file_path].append(line)
-            for fp, lns in by_file_lines.items():
-                file_sources[fp] = "\n".join(lns).encode("utf8", errors="ignore")
-
+        file_sources = self._gather_file_sources(chunks, files)
         all_files = {c.file_path for c in chunks} | set(file_sources.keys())
 
-        # 2. Extract file-level imports and class inheritance per file
+        # 1. Single-pass AST parse per file
         file_imports: dict[str, list[str]] = defaultdict(list)
         file_imported_by: dict[str, list[str]] = defaultdict(list)
         class_bases: dict[tuple[str, str], list[str]] = {}
+        ast_by_file: dict[str, _FileASTSummary] = {}
 
         for fp, code_bytes in sorted(file_sources.items()):
             ext = Path(fp).suffix.lower()
-            if ext == ".py":
-                raw_imports, inherits = self._extract_python_file_relations(code_bytes)
-            elif ext in JS_TS_PARSERS:
-                raw_imports, inherits = self._extract_js_ts_file_relations(code_bytes, JS_TS_PARSERS[ext])
-            else:
+            parser = py_parser if ext == ".py" else JS_TS_PARSERS.get(ext)
+            if parser is None:
                 continue
 
+            summary = self._parse_file_ast(code_bytes, parser, is_python=(ext == ".py"))
+            ast_by_file[fp] = summary
+
             resolved_targets: list[str] = []
-            for spec, syms in raw_imports:
+            for spec, syms in summary.raw_imports:
                 for target_fp in self._resolve_import_specifier(fp, spec, syms, all_files):
                     if target_fp not in resolved_targets:
                         resolved_targets.append(target_fp)
@@ -446,29 +341,26 @@ class DependencyAnalyzer:
                 if fp not in file_imported_by[target_fp]:
                     file_imported_by[target_fp].append(fp)
 
-            for cls_name, bases in inherits.items():
+            for cls_name, bases in summary.inheritance.items():
                 class_bases[(fp, cls_name)] = list(dict.fromkeys(bases))
 
-        # 3. Build symbol index across all chunks for call-graph resolution
-        #    symbol_name -> list of chunks defining that symbol
+        # 2. Build symbol index across all chunks
         defs_by_symbol: dict[str, list[CodeChunk]] = defaultdict(list)
         for c in chunks:
             if c.symbol_name and c.node_type in {"function", "method", "class", "class_header"}:
                 defs_by_symbol[c.symbol_name].append(c)
-            if c.node_type == "class":
-                for method_name in self._extract_atomic_class_methods(c):
+            if c.node_type == "class" and c.file_path in ast_by_file:
+                for method_name in ast_by_file[c.file_path].class_methods.get(c.symbol_name, []):
                     if c not in defs_by_symbol[method_name]:
                         defs_by_symbol[method_name].append(c)
 
-        # Track reverse call edges: id(target_chunk) -> list of caller symbol names
+        # 3. Resolve calls and inheritance for each chunk using line ranges from the file AST
         called_by_map: dict[int, list[str]] = defaultdict(list)
 
-        # 4. Resolve calls and inheritance for each chunk
         for c in chunks:
             c.imports = list(file_imports.get(c.file_path, []))
             c.imported_by = list(file_imported_by.get(c.file_path, []))
 
-            # Attach class inheritance if chunk is a class, class_header, or method of that class
             cls_key = (c.file_path, c.parent_class or c.symbol_name)
             if cls_key in class_bases:
                 c.inherits_from = list(class_bases[cls_key])
@@ -476,11 +368,16 @@ class DependencyAnalyzer:
             if c.node_type not in {"function", "method", "class", "module_preamble"}:
                 continue
 
-            raw_calls = self._extract_chunk_calls(c)
+            file_ast = ast_by_file.get(c.file_path)
+            if not file_ast:
+                continue
+
             imported_set = set(c.imports)
             resolved_callees: list[str] = []
 
-            for receiver, callee in raw_calls:
+            for line_no, receiver, callee in file_ast.calls:
+                if not (c.start_line <= line_no <= c.end_line):
+                    continue
                 if not callee or callee in IGNORED_CALL_NAMES or callee == c.symbol_name:
                     continue
                 target_defs = defs_by_symbol.get(callee)
@@ -489,7 +386,7 @@ class DependencyAnalyzer:
 
                 matched_targets: list[CodeChunk] = []
 
-                # Priority 1: `self.method()` or `this.method()` -> same class or base class
+                # Priority 1: Direct `self.method()` or `this.method()` -> same class or base class
                 if receiver in {"self", "cls", "this"} and c.parent_class:
                     allowed_classes = {c.parent_class} | set(c.inherits_from)
                     matched_targets = [t for t in target_defs if t.parent_class in allowed_classes]
@@ -502,11 +399,9 @@ class DependencyAnalyzer:
                 if not matched_targets:
                     matched_targets = [t for t in target_defs if t.file_path in imported_set]
 
-                # Priority 4: Repo-wide fallback ONLY if the symbol is defined in a single file across the repo
-                if not matched_targets:
-                    unique_files = {t.file_path for t in target_defs}
-                    if len(unique_files) == 1:
-                        matched_targets = target_defs
+                # Priority 4: Repo-wide fallback ONLY if uniquely defined in a single file across the repo
+                if not matched_targets and len({t.file_path for t in target_defs}) == 1:
+                    matched_targets = target_defs
 
                 if matched_targets:
                     if callee not in resolved_callees:
@@ -522,12 +417,10 @@ class DependencyAnalyzer:
 
             c.calls = resolved_callees
 
-        # 5. Apply reverse `called_by` edges and propagate between class_header and class methods
+        # 4. Apply reverse `called_by` edges and inject headers
         for c in chunks:
-            callers = list(called_by_map.get(id(c), []))
-            # If a class is instantiated by callers, share that with its class_header
             if c.node_type in {"class", "class_header", "function", "method"}:
-                c.called_by = callers
+                c.called_by = list(called_by_map.get(id(c), []))
             self._inject_dependency_headers(c)
 
         return chunks
