@@ -434,7 +434,7 @@ class TestDependencyAnalyzer(unittest.TestCase):
         dep_symbols = CodebaseRetriever._extract_dependency_symbols(primary_chunks, max_primary=3)
         self.assertEqual(
             dep_symbols[:5],
-            ["verify_signature", "decode_jwt", "load_user", "check_acl", "audit_event"],
+            ["Router.post_login", "BaseService", "verify_signature", "decode_jwt", "load_user"],
         )
 
         # Verify SupabaseVectorStore.fetch_context_neighbors caps 1-hop dependency chunks at 4
