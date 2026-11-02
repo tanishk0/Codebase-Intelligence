@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import Any
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -16,6 +16,8 @@ from ingestion.summarizer import RepoSummarizer
 from ingestion.vector_store import SupabaseVectorStore
 from retrieval.chat_engine import ConversationalRAGEngine
 from retrieval.llm import NvidiaChatClient
+from retrieval.query_router import QueryRewriteError
+from retrieval.reranker import RerankerServiceError
 from retrieval.retriever import CodebaseRetriever
 
 FRONTEND_DIR = ROOT_DIR / "frontend"
@@ -40,7 +42,10 @@ class ChatRequest(BaseModel):
     message: str
     repo_id: str | None = None
     conversation_id: str | None = None
-    history: list[dict[str, Any]] | None = None
+
+
+class CreateConversationRequest(BaseModel):
+    title: str = "New chat"
 
 
 @app.get("/api/health")
