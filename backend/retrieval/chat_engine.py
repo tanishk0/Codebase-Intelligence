@@ -53,10 +53,16 @@ class ConversationalRAGEngine:
         # 1. Load conversation state from Supabase if a conversation_id was provided
         if conversation_id:
             conv = self.store.get_conversation(conversation_id)
-            if conv:
-                rolling_summary = str(conv.get("rolling_summary") or "")
-                repo_id = repo_id or conv.get("repo_id")
-            active_history = self.store.get_conversation_messages(
+            if not conv:
+                raise ValueError("Conversation not found.")
+            conversation_repo_id = str(conv.get("repo_id") or "")
+            if not conversation_repo_id:
+                raise ValueError("Conversation is not associated with a repository.")
+            if repo_id and repo_id != conversation_repo_id:
+                raise ValueError("Conversation does not belong to the selected repository.")
+            repo_id = conversation_repo_id
+            rolling_summary = str(conv.get("rolling_summary") or "")
+            active_history, _ = self.store.get_conversation_messages(
                 conversation_id, limit=self.max_recent_messages + 4
             )
 
@@ -102,6 +108,8 @@ class ConversationalRAGEngine:
 
         # 6. Persist turn & update rolling summary if conversation_id is active
         if conversation_id:
+            if str((self.store.get_conversation(conversation_id) or {}).get("title") or "") in {"", "New chat"}:
+                self.store.set_conversation_title(conversation_id, user_message)
             self.store.save_message(
                 conversation_id=conversation_id,
                 role="user",
