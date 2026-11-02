@@ -5,7 +5,7 @@ from ingestion.embedder import NvidiaEmbedder
 from ingestion.vector_store import SupabaseVectorStore
 from retrieval.llm import NvidiaChatClient
 from retrieval.query_router import QueryPlan, QueryRouter
-from retrieval.reranker import CodeReranker, ContextAssembler
+from retrieval.reranker import ContextAssembler, NvidiaCrossEncoderReranker
 
 
 @dataclass
@@ -13,6 +13,7 @@ class RetrievalResult:
     plan: QueryPlan
     chunks: list[dict[str, Any]] = field(default_factory=list)
     repo_summary: str = ""
+    no_relevant_code: bool = False
 
     @property
     def cited_chunk_ids(self) -> list[int]:
@@ -45,6 +46,8 @@ class RetrievalResult:
                     f"### [{idx}] {fp}:L{start_l}-L{end_l} ({tag})\n```\n{c.get('content', '').strip()}\n```"
                 )
             sections.append("## Retrieved Code Context\n" + "\n\n".join(chunk_blocks))
+        elif self.no_relevant_code:
+            sections.append("## Retrieval Status\nNo relevant indexed code chunks were found for this question.")
 
         return "\n\n".join(sections)
 
@@ -58,14 +61,14 @@ class CodebaseRetriever:
         embedder: NvidiaEmbedder | None = None,
         llm_client: NvidiaChatClient | None = None,
         router: QueryRouter | None = None,
-        reranker: CodeReranker | None = None,
+        model_reranker: NvidiaCrossEncoderReranker | None = None,
         assembler: ContextAssembler | None = None,
         candidate_pool: int | None = None,
     ) -> None:
         self.store = vector_store
         self.embedder = embedder or NvidiaEmbedder()
         self.router = router or QueryRouter(llm_client=llm_client)
-        self.reranker = reranker or CodeReranker()
+        self.model_reranker = model_reranker or NvidiaCrossEncoderReranker()
         self.assembler = assembler or ContextAssembler()
         self.candidate_pool = candidate_pool or settings.RETRIEVAL_CANDIDATE_POOL
 
@@ -107,7 +110,8 @@ class CodebaseRetriever:
                                 s.strip() for s in seg[len("# Inherits from:") :].split(",") if s.strip()
                             )
 
-            # Interleave callers, base classes, and callees so a long `calls` list never starves `called_by`
+            # Calls and base classes are stored as bare names, not resolved target identities.
+            # Expanding them would frequently attach unrelated symbols, so use only qualified callers.
             raw_edges: list[str] = []
             max_len = max(len(called_by_list), len(inherits_list), len(calls_list), 0)
             for idx in range(max_len):
