@@ -22,11 +22,13 @@ class RepoCloner:
     def __init__(self, git_url: str, branch: str | None = None):
         validate_github_url(git_url)
         self.git_url = git_url
-        self.branch = branch
+        clean_branch = (branch or "").strip()
+        self.branch = None if clean_branch.lower() in {"", "default", "head"} else clean_branch
+        self.resolved_branch: str = self.branch or "main"
         self._temp_dir: tempfile.TemporaryDirectory | None = None
 
     def clone(self) -> Path:
-        self._temp_dir = tempfile.TemporaryDirectory()
+        self._temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         target_path = Path(self._temp_dir.name)
 
         try:
@@ -36,11 +38,17 @@ class RepoCloner:
             if self.branch:
                 clone_kwargs["branch"] = self.branch
 
-            Repo.clone_from(
+            cloned_repo = Repo.clone_from(
                 url=self.git_url,
                 to_path=target_path,
                 **clone_kwargs,
             )
+            try:
+                self.resolved_branch = cloned_repo.active_branch.name
+            except Exception:
+                self.resolved_branch = self.branch or "main"
+            finally:
+                cloned_repo.close()
             return target_path
         except GitCommandError as exc:
             self.cleanup()
@@ -49,5 +57,8 @@ class RepoCloner:
     def cleanup(self) -> None:
         """Removes the temporary directory and all cloned files."""
         if self._temp_dir is not None:
-            self._temp_dir.cleanup()
+            try:
+                self._temp_dir.cleanup()
+            except OSError:
+                pass
             self._temp_dir = None
