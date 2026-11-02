@@ -250,6 +250,7 @@ class TreeSitterChunker:
 
                 covered_lines.update(range(start_l, end_l + 1))
                 body_node = next((c for c in inner.children if c.type in CLASS_BODY_TYPES), None)
+                first_method = None
                 if body_node and body_node.children:
                     first_method = next(
                         (c for c in body_node.children if self._is_callable_node(self._unwrap_node(c)[1], in_class=True)),
