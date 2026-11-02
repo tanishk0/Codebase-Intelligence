@@ -16,8 +16,8 @@ High-performance codebase ingestion, AST chunking, hierarchical summarization, h
 ### Retrieval & Conversational RAG (`retrieval/`)
 - **`retrieval/llm.py`**: Dual-tier NVIDIA NIM chat client pairing `nvidia/nemotron-3-ultra-550b-a55b` (deep code answers) with `nvidia/nemotron-3.5-bolt-e4b` (fast query rewriting & batched summaries).
 - **`retrieval/query_router.py`**: Rewrites ambiguous follow-up questions using chat history and routes queries (`symbol`, `file`, `overview`, or `hybrid`).
-- **`retrieval/reranker.py`**: Code-aware reranker (symbol/file boosts, identifier overlap, carry-over bonus, per-file diversity caps) and `ContextAssembler` (attaching class headers & file preambles, merging overlapping spans, and enforcing token budgets).
-- **`retrieval/retriever.py`**: End-to-end `CodebaseRetriever` orchestrating routing, hybrid RRF search, chunk carry-over, reranking, and context expansion.
+- **`retrieval/reranker.py`**: NVIDIA cross-encoder reranker that scores every unique hybrid candidate before selecting final top-K chunks, plus `ContextAssembler` for headers, overlap merging, and budget enforcement.
+- **`retrieval/retriever.py`**: End-to-end `CodebaseRetriever` orchestrating routing, hybrid RRF search, chunk carry-over, model reranking, and context expansion.
 - **`retrieval/chat_engine.py`**: `ConversationalRAGEngine` managing multi-turn history, rolling conversation summaries, cited chunk carry-over, and grounded `[file_path:Lstart-Lend]` answers.
 
 ## Setup & Running Tests
