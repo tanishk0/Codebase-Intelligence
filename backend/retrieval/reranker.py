@@ -1,6 +1,7 @@
 from collections import defaultdict
 import re
 from typing import Any
+import httpx
 from config import settings
 from ingestion.chunker import split_chunk_headers, split_identifier_tokens
 from retrieval.query_router import QueryPlan
@@ -8,6 +9,114 @@ from retrieval.query_router import QueryPlan
 _WORD_RE = re.compile(r"[a-z0-9]{2,}")
 _TEST_FILE_RE = re.compile(r"(^|/)(tests?|__tests__|spec|fixtures?|mocks?)/|(\.|_)test\.|(\.|_)spec\.", re.IGNORECASE)
 _strip_chunk_header = split_chunk_header = split_chunk_headers
+
+
+class RerankerServiceError(RuntimeError):
+    """Raised when the cross-encoder reranking service cannot return a usable ranking."""
+
+
+class NvidiaCrossEncoderReranker:
+    """Batched NVIDIA cross-encoder reranker for final ordering of retrieved code chunks."""
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        endpoint: str | None = None,
+        model: str | None = None,
+        timeout: float = 30.0,
+    ) -> None:
+        self.api_key = api_key if api_key is not None else settings.NVIDIA_API_KEY
+        if not self.api_key:
+            raise ValueError("NVIDIA_API_KEY is missing. Set it in your .env file.")
+        self.endpoint = endpoint or settings.NVIDIA_RERANK_URL
+        self.model = model or settings.NVIDIA_RERANK_MODEL
+        self.timeout = timeout
+
+    @staticmethod
+    def _passage(chunk: dict[str, Any]) -> str:
+        return "\n".join(
+            part for part in (
+                f"File: {chunk.get('file_path') or 'unknown'}",
+                f"Class: {chunk.get('parent_class')}" if chunk.get("parent_class") else "",
+                f"Symbol: {chunk.get('symbol_name')}" if chunk.get("symbol_name") else "",
+                str(chunk.get("content") or ""),
+            ) if part
+        )
+
+    @staticmethod
+    def deduplicate(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Keeps one copy of each source span before passing all candidates to the model."""
+        unique: dict[tuple[str, int, int, str], dict[str, Any]] = {}
+        for candidate in candidates:
+            key = (
+                str(candidate.get("file_path") or ""),
+                int(candidate.get("start_line") or 0),
+                int(candidate.get("end_line") or 0),
+                str(candidate.get("node_type") or ""),
+            )
+            existing = unique.get(key)
+            if existing is None or float(candidate.get("rrf_score") or 0.0) > float(existing.get("rrf_score") or 0.0):
+                unique[key] = candidate
+        return list(unique.values())
+
+    @staticmethod
+    def _results(data: dict[str, Any]) -> list[dict[str, Any]]:
+        for key in ("rankings", "results", "data"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+        raise RerankerServiceError("The AI reranking service returned an unexpected response.")
+
+    def rerank(self, query: str, candidates: list[dict[str, Any]], top_k: int) -> list[dict[str, Any]]:
+        if not candidates:
+            return []
+
+        payload = {
+            "model": self.model,
+            "query": {"text": query},
+            "passages": [{"text": self._passage(chunk)} for chunk in candidates],
+            "truncate": "END",
+        }
+        headers = {"Authorization": f"Bearer {self.api_key}", "Accept": "application/json"}
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.post(self.endpoint, headers=headers, json=payload)
+            if response.status_code >= 400:
+                raise RerankerServiceError(f"The AI reranking service returned HTTP {response.status_code}.")
+            rankings = self._results(response.json())
+        except RerankerServiceError:
+            raise
+        except (httpx.HTTPError, ValueError, TypeError) as exc:
+            raise RerankerServiceError(
+                "The AI reranking service is unavailable. Please try again in a moment."
+            ) from exc
+
+        scored: list[tuple[float, int]] = []
+        for item in rankings:
+            index = item.get("index")
+            score = item.get("logit", item.get("relevance_score", item.get("score")))
+            if not isinstance(index, int) or not (0 <= index < len(candidates)):
+                continue
+            try:
+                scored.append((float(score), index))
+            except (TypeError, ValueError):
+                continue
+        if not scored:
+            raise RerankerServiceError("The AI reranking service returned no usable chunk scores.")
+
+        scored.sort(reverse=True)
+        ranked: list[dict[str, Any]] = []
+        seen: set[int] = set()
+        for score, index in scored:
+            if index in seen:
+                continue
+            seen.add(index)
+            item = dict(candidates[index])
+            item["model_rerank_score"] = score
+            ranked.append(item)
+            if len(ranked) >= top_k:
+                break
+        return ranked
 
 
 def _tokenize(text: str) -> set[str]:
@@ -86,12 +195,14 @@ class CodeReranker:
         candidates: list[dict[str, Any]],
         plan: QueryPlan,
         carryover_ids: set[int] | None = None,
+        top_k: int | None = None,
     ) -> list[dict[str, Any]]:
         """Scores, deduplicates, applies per-file diversity caps, and returns top-K chunks."""
         if not candidates:
             return []
 
         carry_set = carryover_ids or set()
+        result_limit = top_k or self.top_k
         query_tokens = _tokenize(plan.standalone_query)
 
         # Deduplicate by (file_path, start_line, end_line, node_type) keeping the highest-scored entry
