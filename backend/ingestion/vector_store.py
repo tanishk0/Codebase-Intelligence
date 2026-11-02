@@ -233,13 +233,42 @@ class SupabaseVectorStore:
         expanded_query_text = f"{query_text} {split_identifier_tokens(query_text)}".strip()
         vector_params: dict[str, Any] = {
             "query_embedding": query_embedding,
+            "match_repo_id": repo_id,
+            "match_count": match_count,
+        }
+        bm25_params = {
             "query_text": expanded_query_text,
             "match_repo_id": repo_id,
             "match_count": match_count,
-            "rrf_k": rrf_k,
         }
-        res = self.client.rpc("hybrid_search_code_chunks", params).execute()
-        return list(res.data or [])
+        vector_rows = list(self.client.rpc("semantic_search_code_chunks", vector_params).execute().data or [])
+        bm25_rows = list(self.client.rpc("bm25_search_code_chunks", bm25_params).execute().data or [])
+
+        fused: dict[int, dict[str, Any]] = {}
+        for rank, row in enumerate(vector_rows, start=1):
+            item = dict(row)
+            item["similarity"] = float(item.get("similarity") or 0.0)
+            item["bm25_score"] = 0.0
+            item["fts_rank"] = 0.0  # Backward-compatible API field; BM25 is exposed separately.
+            item["rrf_score"] = 1.0 / (rrf_k + rank)
+            fused[int(item["id"])] = item
+
+        for rank, row in enumerate(bm25_rows, start=1):
+            item = fused.get(int(row["id"]))
+            if item is None:
+                item = dict(row)
+                item["similarity"] = 0.0
+                item["fts_rank"] = 0.0
+                item["rrf_score"] = 0.0
+                fused[int(item["id"])] = item
+            item["bm25_score"] = float(row.get("bm25_score") or 0.0)
+            item["rrf_score"] += 1.0 / (rrf_k + rank)
+
+        return sorted(
+            fused.values(),
+            key=lambda item: (float(item["rrf_score"]), float(item.get("similarity") or 0.0)),
+            reverse=True,
+        )[:match_count]
 
     def fetch_context_neighbors(
         self,
@@ -341,14 +370,20 @@ class SupabaseVectorStore:
 
         return neighbors
 
-    def fetch_chunks_by_ids(self, chunk_ids: list[int]) -> list[dict[str, Any]]:
-        """Re-fetches specific chunks by primary key (used to carry over cited chunks across chat turns)."""
+    def fetch_chunks_by_ids(self, repo_id: str, chunk_ids: list[int]) -> list[dict[str, Any]]:
+        """Re-fetches carry-over chunks only from the repository's currently active index run."""
         if not chunk_ids:
+            return []
+        repo = self.get_repository(repo_id)
+        active_run_id = repo.get("active_run_id") if repo else None
+        if not active_run_id:
             return []
         cols = "id,repo_id,file_path,content,start_line,end_line,node_type,parent_class,symbol_name"
         res = (
             self.client.table("code_chunks")
             .select(cols)
+            .eq("repo_id", repo_id)
+            .eq("run_id", active_run_id)
             .in_("id", list(dict.fromkeys(chunk_ids)))
             .execute()
         )
@@ -387,7 +422,39 @@ class SupabaseVectorStore:
         res = self.client.table("conversations").select("*").eq("id", conversation_id).execute()
         return res.data[0] if res.data else None
 
-    def get_conversation_messages(self, conversation_id: str, limit: int = 10) -> list[dict[str, Any]]:
+    def list_conversations(self, repo_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        res = (
+            self.client.table("conversations")
+            .select("id,repo_id,title,created_at,updated_at")
+            .eq("repo_id", repo_id)
+            .order("updated_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return list(res.data or [])
+
+    def get_conversation_messages(
+        self,
+        conversation_id: str,
+        limit: int = 10,
+        before_id: int | None = None,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Returns an oldest-first page, with an opaque numeric cursor represented by message id."""
+        query = (
+            self.client.table("messages")
+            .select("*")
+            .eq("conversation_id", conversation_id)
+            .order("id", desc=True)
+            .limit(limit + 1)
+        )
+        if before_id is not None:
+            query = query.lt("id", before_id)
+        res = query.execute()
+        rows = list(res.data or [])
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        rows.reverse()
+        return rows, has_more
         res = (
             self.client.table("messages")
             .select("*")
@@ -424,4 +491,9 @@ class SupabaseVectorStore:
                 "rolling_summary": rolling_summary,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
+        ).eq("id", conversation_id).execute()
+
+    def set_conversation_title(self, conversation_id: str, title: str) -> None:
+        self.client.table("conversations").update(
+            {"title": title[:120], "updated_at": datetime.now(timezone.utc).isoformat()}
         ).eq("id", conversation_id).execute()
