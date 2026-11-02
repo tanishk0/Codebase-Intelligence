@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import re
 from typing import Any
 import uuid
 from supabase import Client, create_client
@@ -10,6 +11,7 @@ from ingestion.loader import LoadedFile
 from ingestion.summarizer import RepoSummarizer
 
 _DEP_COLUMNS = ("imports", "imported_by", "calls", "called_by", "inherits_from")
+_BM25_TERM_RE = re.compile(r"[a-z0-9_]{2,}")
 
 
 class SupabaseVectorStore:
@@ -93,13 +95,21 @@ class SupabaseVectorStore:
 
     # ---------- writes ----------
 
+    @staticmethod
+    def _bm25_terms(text: str) -> list[str]:
+        """Returns normalized terms, preserving repetitions required by BM25 term frequency."""
+        return _BM25_TERM_RE.findall(text.lower())
+
     def insert_chunks(self, repo_id: str, run_id: str, embedded_chunks: list[EmbeddedChunk]) -> int:
         """Inserts embedded code chunks for a specific run in batches."""
         if not embedded_chunks:
             return 0
 
-        rows = [
-            {
+        rows = []
+        for item in embedded_chunks:
+            search_text = build_search_text(item.chunk)
+            rows.append(
+                {
                 "repo_id": repo_id,
                 "run_id": run_id,
                 "file_path": item.chunk.file_path,
@@ -114,11 +124,11 @@ class SupabaseVectorStore:
                 "calls": item.chunk.calls,
                 "called_by": item.chunk.called_by,
                 "inherits_from": item.chunk.inherits_from,
-                "search_text": build_search_text(item.chunk),
+                "search_text": search_text,
+                "search_terms": self._bm25_terms(search_text),
                 "embedding": item.embedding,
             }
-            for item in embedded_chunks
-        ]
+            )
 
         inserted = 0
         include_dep_cols = True
@@ -219,9 +229,9 @@ class SupabaseVectorStore:
         match_count: int = 30,
         rrf_k: int = 60,
     ) -> list[dict[str, Any]]:
-        """Executes unified hybrid search (pgvector semantic similarity + full-text keyword search via RRF)."""
+        """Fetches independent vector and BM25 candidates, then combines their ranks with RRF."""
         expanded_query_text = f"{query_text} {split_identifier_tokens(query_text)}".strip()
-        params: dict[str, Any] = {
+        vector_params: dict[str, Any] = {
             "query_embedding": query_embedding,
             "query_text": expanded_query_text,
             "match_repo_id": repo_id,
