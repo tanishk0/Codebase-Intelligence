@@ -31,6 +31,10 @@ class QueryPlan:
     target_file: str | None = None
 
 
+class QueryRewriteError(RuntimeError):
+    """Raised when a conversational follow-up cannot be rewritten safely."""
+
+
 def extract_query_hints(query: str) -> tuple[str | None, str | None]:
     """Deterministically extracts soft file path and symbol hints from a query string for reranking."""
     file_match = _FILE_PATH_RE.search(query)
