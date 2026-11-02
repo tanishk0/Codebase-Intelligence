@@ -223,17 +223,24 @@ class TestSupabaseVectorStore(unittest.TestCase):
             repo_id="repo-1",
             match_count=5,
         )
-        self.assertEqual(len(results), 1)
-        self.client.rpc.assert_called_once_with(
-            "hybrid_search_code_chunks",
+        self.assertEqual([r["id"] for r in results], [1, 2])
+        self.client.rpc.assert_has_calls([
+            call(
+            "semantic_search_code_chunks",
             {
                 "query_embedding": [0.1, 0.2],
-                "query_text": "how does TreeSitterChunker work? tree sitter chunker",
                 "match_repo_id": "repo-1",
                 "match_count": 5,
-                "rrf_k": 60,
-            },
-        )
+            }),
+            call(
+                "bm25_search_code_chunks",
+                {
+                    "query_text": "how does TreeSitterChunker work? tree sitter chunker",
+                    "match_repo_id": "repo-1",
+                    "match_count": 5,
+                },
+            ),
+        ])
 
 
 if __name__ == "__main__":
