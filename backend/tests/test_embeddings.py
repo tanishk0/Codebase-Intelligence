@@ -1,7 +1,7 @@
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import httpx
 
@@ -211,8 +211,12 @@ class TestSupabaseVectorStore(unittest.TestCase):
             self.store.index_chunks("https://github.com/org/repo", chunks=[], embedder=embedder)
         self.repo_table.update.assert_not_called()
 
-    def test_hybrid_search_rpc(self) -> None:
-        self.client.rpc.return_value.execute.return_value.data = [{"file_path": "a.py", "similarity": 0.88}]
+    def test_hybrid_search_fuses_independent_vector_and_bm25_results(self) -> None:
+        vector_result = MagicMock()
+        vector_result.execute.return_value.data = [{"id": 1, "file_path": "a.py", "similarity": 0.88}]
+        bm25_result = MagicMock()
+        bm25_result.execute.return_value.data = [{"id": 2, "file_path": "b.py", "bm25_score": 4.2}]
+        self.client.rpc.side_effect = [vector_result, bm25_result]
         results = self.store.hybrid_search(
             [0.1, 0.2],
             query_text="how does TreeSitterChunker work?",
