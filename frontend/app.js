@@ -22,228 +22,95 @@ async function checkHealth() {
 }
 
 function renderRepos() {
-  if (!state.repos.length) {
-    els.reposList.innerHTML = `<div class="empty-hint">No repositories indexed yet. Click <strong>⚡ Index Local</strong> above to test immediately!</div>`;
-    return;
-  }
-
-  els.reposList.innerHTML = state.repos
-    .map((r) => {
-      const isActive = r.id === state.activeRepoId ? "active" : "";
-      const shortName = r.repo_url.replace("https://github.com/", "");
-      return `
-        <div class="repo-item ${isActive}" data-id="${escapeHtml(r.id)}">
-          <div class="repo-name">${escapeHtml(shortName)}</div>
-          <div class="repo-meta">${r.chunk_count || 0} chunks • branch: ${escapeHtml(r.branch || "main")}</div>
-        </div>
-      `;
-    })
-    .join("");
-
-  els.reposList.querySelectorAll(".repo-item").forEach((item) => {
-    item.addEventListener("click", () => {
-      const repo = state.repos.find((r) => r.id === item.dataset.id);
-      if (repo) selectRepo(repo);
-    });
-  });
+  if (!state.repos.length) { els.reposList.innerHTML = `<div class="empty-hint">No repositories indexed yet.</div>`; return; }
+  els.reposList.innerHTML = state.repos.map((repo) => `<div class="repo-item ${repo.id === state.activeRepoId ? "active" : ""}" data-id="${escapeHtml(repo.id)}"><div class="repo-name">${escapeHtml(repo.repo_url.replace("https://github.com/", ""))}</div><div class="repo-meta">${repo.chunk_count || 0} chunks • ${escapeHtml(repo.branch || "main")}</div></div>`).join("");
+  els.reposList.querySelectorAll(".repo-item").forEach((item) => item.addEventListener("click", async () => { const repo = state.repos.find((entry) => entry.id === item.dataset.id); if (repo) await selectRepo(repo); }));
+}
+async function loadRepositories() {
+  try { const data = await api("/api/repos"); state.repos = data.repos || []; renderRepos(); if (!state.activeRepoId && state.repos.length) await selectRepo(state.repos[0]); }
+  catch (err) { els.reposList.innerHTML = `<div class="empty-hint">${escapeHtml(err.message)}</div>`; }
 }
 
-function selectRepo(repo) {
-  state.activeRepoId = repo.id;
-  state.activeRepoUrl = repo.repo_url;
-  state.conversationId = null;
-  state.history = [];
-  els.activeRepoLabel.textContent = `${repo.repo_url.replace("https://github.com/", "")} (${repo.chunk_count} chunks)`;
-  renderRepos();
+function renderConversations() {
+  if (!state.activeRepoId) { els.conversationsList.innerHTML = `<div class="empty-hint">Select a repository to view its chats.</div>`; return; }
+  if (!state.conversations.length) { els.conversationsList.innerHTML = `<div class="empty-hint">No chats yet.</div>`; return; }
+  els.conversationsList.innerHTML = state.conversations.map((chat) => `<div class="conversation-item ${chat.id === state.conversationId ? "active" : ""}" data-id="${escapeHtml(chat.id)}"><div class="conversation-title">${escapeHtml(chat.title || "New chat")}</div><div class="conversation-date">${new Date(chat.updated_at).toLocaleString()}</div></div>`).join("");
+  els.conversationsList.querySelectorAll(".conversation-item").forEach((item) => item.addEventListener("click", () => loadConversation(item.dataset.id)));
+}
+async function loadConversations(selectLatest = false) {
+  if (!state.activeRepoId) return;
+  const repoId = state.activeRepoId; const data = await api(`/api/repos/${encodeURIComponent(repoId)}/conversations`);
+  if (state.activeRepoId !== repoId) return;
+  state.conversations = data.conversations || []; renderConversations();
+  if (selectLatest && state.conversations.length) await loadConversation(state.conversations[0].id);
+}
+async function selectRepo(repo) {
+  state.activeRepoId = repo.id; state.activeRepoUrl = repo.repo_url; state.conversationId = null; state.oldestMessageId = null; state.hasMoreMessages = false;
+  els.activeRepoLabel.textContent = `${repo.repo_url.replace("https://github.com/", "")} (${repo.chunk_count} chunks)`; els.chatMessages.innerHTML = welcome(); renderRepos(); await loadConversations(true);
 }
 
-async function triggerIngest(repoUrl, branch, llmSummaries) {
-  els.ingestBtn.disabled = true;
-  els.ingestLocalBtn.disabled = true;
-  els.ingestStatus.textContent = `Indexing ${repoUrl} (chunking + NVIDIA embeddings + Supabase)...`;
-
+function appendStoredMessage(message, prepend = false) {
+  const div = document.createElement("div"); div.className = `msg ${message.role}`;
+  if (message.role === "assistant") div.innerHTML = `<div class="msg-content">${renderMarkdownLite(message.content)}</div>`; else div.textContent = message.content;
+  if (prepend) els.chatMessages.prepend(div); else els.chatMessages.appendChild(div);
+}
+function renderMessagePage(messages, prepend = false) {
+  els.chatMessages.querySelector(".welcome-state")?.remove(); els.chatMessages.querySelector(".load-older")?.remove();
+  if (prepend) [...messages].reverse().forEach((message) => appendStoredMessage(message, true)); else messages.forEach((message) => appendStoredMessage(message));
+  if (state.hasMoreMessages) { const button = document.createElement("button"); button.className = "load-older"; button.textContent = "Load older messages"; button.addEventListener("click", loadOlderMessages); els.chatMessages.prepend(button); }
+}
+async function fetchMessagePage(beforeId = null) {
+  const query = new URLSearchParams({ limit: "4" }); if (beforeId) query.set("before_id", beforeId);
+  return api(`/api/conversations/${encodeURIComponent(state.conversationId)}/messages?${query}`);
+}
+async function loadConversation(conversationId) {
+  state.conversationId = conversationId; state.oldestMessageId = null; state.hasMoreMessages = false; renderConversations(); els.chatMessages.innerHTML = `<div class="empty-hint">Loading chat...</div>`;
   try {
-    const res = await fetch("/api/ingest", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        repo_url: repoUrl,
-        branch: branch || null,
-        llm_summaries: llmSummaries,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.detail || "Ingestion failed");
-    }
-    els.ingestStatus.textContent = `✓ Indexed ${data.file_count} files (${data.total_indexed_chunks} total chunks including file summaries).`;
-    await checkHealth();
-    await loadRepositories();
-    const created = state.repos.find((r) => r.id === data.repo_id);
-    if (created) selectRepo(created);
-  } catch (err) {
-    els.ingestStatus.textContent = `✗ ${err.message}`;
-  } finally {
-    els.ingestBtn.disabled = false;
-    els.ingestLocalBtn.disabled = false;
-  }
+    const data = await fetchMessagePage(); state.hasMoreMessages = Boolean(data.has_more); state.oldestMessageId = data.next_before_id || (data.messages[0] && data.messages[0].id) || null;
+    els.chatMessages.innerHTML = ""; renderMessagePage(data.messages || []); if (!data.messages.length) els.chatMessages.innerHTML = welcome(); scrollBottom();
+  } catch (err) { els.chatMessages.innerHTML = `<div class="empty-hint">${escapeHtml(err.message)}</div>`; }
+}
+async function loadOlderMessages() {
+  if (state.loadingOlder || !state.hasMoreMessages || !state.oldestMessageId) return;
+  state.loadingOlder = true; const oldHeight = els.chatMessages.scrollHeight; const oldTop = els.chatMessages.scrollTop;
+  try {
+    const data = await fetchMessagePage(state.oldestMessageId); state.hasMoreMessages = Boolean(data.has_more); state.oldestMessageId = data.next_before_id || (data.messages[0] && data.messages[0].id) || null;
+    renderMessagePage(data.messages || [], true); els.chatMessages.scrollTop = oldTop + els.chatMessages.scrollHeight - oldHeight;
+  } catch (err) { console.error(err); } finally { state.loadingOlder = false; }
 }
 
-function appendUserMessage(text) {
-  const welcome = els.chatMessages.querySelector(".welcome-state");
-  if (welcome) welcome.remove();
-
-  const div = document.createElement("div");
-  div.className = "msg user";
-  div.textContent = text;
-  els.chatMessages.appendChild(div);
-  els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+async function newConversation() {
+  if (!state.activeRepoId) { els.ingestStatus.textContent = "Select a repository before starting a chat."; return; }
+  try { const data = await api(`/api/repos/${encodeURIComponent(state.activeRepoId)}/conversations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: "New chat" }) }); await loadConversations(); await loadConversation(data.conversation.id); }
+  catch (err) { els.ingestStatus.textContent = `✗ ${err.message}`; }
 }
-
-function appendAssistantMessage(data) {
-  const div = document.createElement("div");
-  div.className = "msg assistant";
-
-  const badges = [];
-  if (data.standalone_query && data.standalone_query !== data.original_query) {
-    badges.push(`<span class="badge highlight" title="Follow-up rewritten for hybrid search">Rewritten: ${escapeHtml(data.standalone_query)}</span>`);
-  }
-  if (!data.needs_retrieval) {
-    badges.push(`<span class="badge">Answered from conversation history</span>`);
-  } else {
-    badges.push(`<span class="badge">${(data.chunks || []).length} hybrid chunks</span>`);
-  }
-  if (data.target_symbol) {
-    badges.push(`<span class="badge">symbol: ${escapeHtml(data.target_symbol)}</span>`);
-  }
-  if (data.target_file) {
-    badges.push(`<span class="badge">file: ${escapeHtml(data.target_file)}</span>`);
-  }
-
-  const chunksHtml = (data.chunks || [])
-    .map(
-      (c, i) => `
-      <div class="chunk-card">
-        <div class="chunk-card-header">
-          <span>#${i + 1} ${escapeHtml(c.file_path)}:L${c.start_line}-L${c.end_line} [${escapeHtml(c.is_context_expansion ? "context header" : c.node_type)}]</span>
-          <span class="chunk-scores">rerank=${c.rerank_score} • rrf=${c.rrf_score} • sim=${c.similarity}</span>
-        </div>
-        <pre>${escapeHtml(c.content)}</pre>
-      </div>
-    `
-    )
-    .join("");
-
-  const drawerHtml =
-    data.chunks && data.chunks.length
-      ? `<details class="chunks-drawer">
-          <summary>Inspect Retrieved Chunks (${data.chunks.length})</summary>
-          ${chunksHtml}
-        </details>`
-      : "";
-
-  div.innerHTML = `
-    <div class="msg-meta-bar">${badges.join("")}</div>
-    <div class="msg-content">${renderMarkdownLite(data.answer)}</div>
-    ${drawerHtml}
-  `;
-  els.chatMessages.appendChild(div);
-  els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+function appendAssistantResponse(data) {
+  const div = document.createElement("div"); div.className = "msg assistant";
+  const chunks = (data.chunks || []).map((chunk, index) => `<div class="chunk-card"><div class="chunk-card-header"><span>#${index + 1} ${escapeHtml(chunk.file_path)}:L${chunk.start_line}-L${chunk.end_line}</span></div><pre>${escapeHtml(chunk.content)}</pre></div>`).join("");
+  div.innerHTML = `<div class="msg-content">${renderMarkdownLite(data.answer)}</div>${chunks ? `<details class="chunks-drawer"><summary>Inspect Retrieved Chunks (${data.chunks.length})</summary>${chunks}</details>` : ""}`; els.chatMessages.appendChild(div);
 }
-
+async function refreshActivePageState() { if (!state.conversationId) return; const data = await fetchMessagePage(); state.hasMoreMessages = Boolean(data.has_more); state.oldestMessageId = data.next_before_id || (data.messages[0] && data.messages[0].id) || null; }
 async function sendChatMessage(message) {
-  appendUserMessage(message);
-  els.sendBtn.disabled = true;
-  els.chatInput.disabled = true;
-
-  const thinkingDiv = document.createElement("div");
-  thinkingDiv.className = "msg assistant";
-  thinkingDiv.textContent = "Running hybrid search & generating answer...";
-  els.chatMessages.appendChild(thinkingDiv);
-  els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
-
+  if (!state.activeRepoId) { els.ingestStatus.textContent = "Select a repository before sending a message."; return; }
+  appendStoredMessage({ role: "user", content: message }); els.sendBtn.disabled = true; els.chatInput.disabled = true;
+  const thinking = document.createElement("div"); thinking.className = "msg assistant"; thinking.textContent = "Searching the codebase..."; els.chatMessages.appendChild(thinking); scrollBottom();
   try {
-    const res = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message,
-        repo_id: state.activeRepoId,
-        conversation_id: state.conversationId,
-        history: state.history,
-      }),
-    });
-    const data = await res.json();
-    thinkingDiv.remove();
-
-    if (!res.ok) {
-      throw new Error(data.detail || "Chat request failed");
-    }
-
-    state.conversationId = data.conversation_id || state.conversationId;
-    state.history.push({ role: "user", content: message });
-    state.history.push({
-      role: "assistant",
-      content: data.answer,
-      cited_chunk_ids: data.cited_chunk_ids || [],
-    });
-
-    appendAssistantMessage(data);
-  } catch (err) {
-    thinkingDiv.textContent = `Error: ${err.message}`;
-  } finally {
-    els.sendBtn.disabled = false;
-    els.chatInput.disabled = false;
-    els.chatInput.focus();
-  }
+    const data = await api("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message, repo_id: state.activeRepoId, conversation_id: state.conversationId }) });
+    thinking.remove(); state.conversationId = data.conversation_id; appendAssistantResponse(data); await refreshActivePageState(); await loadConversations(); renderConversations();
+  } catch (err) { thinking.textContent = `Error: ${err.message}`; }
+  finally { els.sendBtn.disabled = false; els.chatInput.disabled = false; els.chatInput.focus(); }
+}
+async function triggerIngest(repoUrl, branch, llmSummaries) {
+  els.ingestBtn.disabled = true; els.ingestLocalBtn.disabled = true; els.ingestStatus.textContent = `Indexing ${repoUrl}...`;
+  try { const data = await api("/api/ingest", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo_url: repoUrl, branch: branch || null, llm_summaries: llmSummaries }) }); els.ingestStatus.textContent = `✓ Indexed ${data.file_count} files (${data.total_indexed_chunks} chunks).`; await checkHealth(); await loadRepositories(); const created = state.repos.find((repo) => repo.id === data.repo_id); if (created) await selectRepo(created); }
+  catch (err) { els.ingestStatus.textContent = `✗ ${err.message}`; } finally { els.ingestBtn.disabled = false; els.ingestLocalBtn.disabled = false; }
 }
 
-// Event Listeners
-els.ingestForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-  triggerIngest(
-    els.repoUrlInput.value.trim(),
-    els.repoBranchInput.value.trim(),
-    els.llmSummariesInput.checked
-  );
-});
-
-els.ingestLocalBtn.addEventListener("click", () => {
-  els.repoUrlInput.value = "local";
-  triggerIngest("local", "main", els.llmSummariesInput.checked);
-});
-
-els.refreshReposBtn.addEventListener("click", loadRepositories);
-
-els.newChatBtn.addEventListener("click", () => {
-  state.conversationId = null;
-  state.history = [];
-  els.chatMessages.innerHTML = `<div class="welcome-state"><h3>Started a new conversation</h3><p>Ask a question about ${escapeHtml(state.activeRepoUrl || "your repository")}.</p></div>`;
-});
-
-els.chatForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-  const msg = els.chatInput.value.trim();
-  if (!msg) return;
-  els.chatInput.value = "";
-  sendChatMessage(msg);
-});
-
-els.chatInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    els.chatForm.requestSubmit();
-  }
-});
-
-document.querySelectorAll(".prompt-chip").forEach((chip) => {
-  chip.addEventListener("click", () => {
-    const prompt = chip.dataset.prompt;
-    if (prompt) sendChatMessage(prompt);
-  });
-});
-
-// Initialize
-checkHealth();
-loadRepositories();
-
+els.ingestForm.addEventListener("submit", (event) => { event.preventDefault(); triggerIngest(els.repoUrlInput.value.trim(), els.repoBranchInput.value.trim(), els.llmSummariesInput.checked); });
+els.ingestLocalBtn.addEventListener("click", () => { els.repoUrlInput.value = "local"; triggerIngest("local", "main", els.llmSummariesInput.checked); });
+els.refreshReposBtn.addEventListener("click", loadRepositories); els.newChatBtn.addEventListener("click", newConversation); els.newSidebarChatBtn.addEventListener("click", newConversation);
+els.chatForm.addEventListener("submit", (event) => { event.preventDefault(); const message = els.chatInput.value.trim(); if (!message) return; els.chatInput.value = ""; sendChatMessage(message); });
+els.chatInput.addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); els.chatForm.requestSubmit(); } });
+els.chatMessages.addEventListener("scroll", () => { if (els.chatMessages.scrollTop <= 8) loadOlderMessages(); });
+document.querySelectorAll(".prompt-chip").forEach((chip) => chip.addEventListener("click", () => chip.dataset.prompt && sendChatMessage(chip.dataset.prompt)));
+checkHealth(); loadRepositories();
