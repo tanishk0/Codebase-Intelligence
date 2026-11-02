@@ -53,8 +53,13 @@ alter table public.code_chunks add column if not exists calls text[] not null de
 alter table public.code_chunks add column if not exists called_by text[] not null default '{}';
 alter table public.code_chunks add column if not exists inherits_from text[] not null default '{}';
 alter table public.code_chunks add column if not exists search_text text not null default '';
+alter table public.code_chunks add column if not exists search_terms text[] not null default '{}';
 alter table public.code_chunks add column if not exists fts tsvector
     generated always as (to_tsvector('english', search_text)) stored;
+
+update public.code_chunks
+set search_terms = array_remove(regexp_split_to_array(lower(search_text), '[^a-z0-9_]+'), '')
+where cardinality(search_terms) = 0 and search_text <> '';
 
 -- 4. Indexes for fast filtering, symbol lookup, full-text search (GIN), & HNSW cosine vector search
 create index if not exists idx_code_chunks_repo_id on public.code_chunks(repo_id);
