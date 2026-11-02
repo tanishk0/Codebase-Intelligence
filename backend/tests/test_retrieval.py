@@ -321,10 +321,28 @@ class TestConversationalRAGFlow(unittest.TestCase):
 
         self.assertIn("ingestion/chunker.py:L150-L192", turn.answer)
         self.assertIn(42, turn.cited_chunk_ids)
-        mock_store.fetch_chunks_by_ids.assert_called_once_with([41])
+        mock_store.fetch_chunks_by_ids.assert_called_once_with("repo-1", [41])
 
 
 class TestDependencyAnalyzer(unittest.TestCase):
+    def test_python_import_alias_resolves_to_exported_symbol(self) -> None:
+        files = [
+            LoadedFile("pkg/lib.py", "def actual():\n    pass\n", ".py", 20),
+            LoadedFile(
+                "pkg/main.py",
+                "from .lib import actual as alias\n\ndef caller():\n    alias()\n",
+                ".py",
+                60,
+            ),
+        ]
+        chunks = TreeSitterChunker().chunk_all(files)
+        DependencyAnalyzer().analyze(chunks, files=files)
+
+        caller = next(c for c in chunks if c.symbol_name == "caller")
+        target = next(c for c in chunks if c.symbol_name == "actual")
+        self.assertEqual(caller.calls, ["actual"])
+        self.assertEqual(target.called_by, ["caller"])
+
     def test_python_imports_inheritance_and_call_graph_disambiguation(self) -> None:
         chunker = TreeSitterChunker(max_class_lines=5)
         analyzer = DependencyAnalyzer()
@@ -489,8 +507,11 @@ class TestDependencyAnalyzer(unittest.TestCase):
                 "node_type": "method",
                 "parent_class": "AuthService",
                 "symbol_name": "login",
-                "calls": ["verify_signature", "decode_jwt", "load_user", "check_acl", "audit_event"],
-                "called_by": ["Router.post_login"],
+                "calls": ["verify_signature", "decode_jwt"],
+                "called_by": [
+                    "Router.post_login", "Router.post_logout", "Router.post_refresh",
+                    "Router.post_revoke", "Router.post_status",
+                ],
                 "inherits_from": ["BaseService"],
                 "content": "# File: backend/services/auth.py\ndef login(self, token): ...",
                 "rerank_score": 0.92,
@@ -499,7 +520,7 @@ class TestDependencyAnalyzer(unittest.TestCase):
         dep_symbols = CodebaseRetriever._extract_dependency_symbols(primary_chunks, max_primary=3)
         self.assertEqual(
             dep_symbols[:5],
-            ["Router.post_login", "BaseService", "verify_signature", "decode_jwt", "load_user"],
+            ["Router.post_login", "Router.post_logout", "Router.post_refresh", "Router.post_revoke", "Router.post_status"],
         )
 
         # Verify SupabaseVectorStore.fetch_context_neighbors caps 1-hop dependency chunks at 4
@@ -522,13 +543,11 @@ class TestDependencyAnalyzer(unittest.TestCase):
                 "start_line": 1,
                 "end_line": 5,
                 "node_type": "function",
-                "parent_class": "",
+                "parent_class": "Router",
                 "symbol_name": sym,
                 "content": f"def {sym}(): pass",
             }
-            for i, sym in enumerate(
-                ["verify_signature", "decode_jwt", "load_user", "check_acl", "audit_event"]
-            )
+            for i, sym in enumerate(["post_login", "post_logout", "post_refresh", "post_revoke", "post_status"])
         ]
         (
             chunks_table.select.return_value.eq.return_value.eq.return_value.in_.return_value.in_.return_value.execute
@@ -546,7 +565,7 @@ class TestDependencyAnalyzer(unittest.TestCase):
         self.assertEqual(len(dep_neighbors), 4)
         self.assertEqual(
             [n["symbol_name"] for n in dep_neighbors],
-            ["verify_signature", "decode_jwt", "load_user", "check_acl"],
+            ["post_login", "post_logout", "post_refresh", "post_revoke"],
         )
 
 
