@@ -87,6 +87,60 @@ def list_repos() -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/api/repos/{repo_id}/conversations")
+def list_conversations(repo_id: str) -> dict[str, Any]:
+    try:
+        store = SupabaseVectorStore()
+        if not store.get_repository(repo_id):
+            raise HTTPException(status_code=404, detail="Repository not found.")
+        return {"conversations": store.list_conversations(repo_id)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/repos/{repo_id}/conversations")
+def create_conversation(repo_id: str, req: CreateConversationRequest) -> dict[str, Any]:
+    try:
+        store = SupabaseVectorStore()
+        if not store.get_repository(repo_id):
+            raise HTTPException(status_code=404, detail="Repository not found.")
+        conversation_id = store.create_conversation(repo_id=repo_id, title=req.title.strip() or "New chat")
+        conversation = store.get_conversation(conversation_id)
+        return {"conversation": conversation}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/conversations/{conversation_id}/messages")
+def get_conversation_messages(
+    conversation_id: str,
+    limit: int = Query(default=4, ge=1, le=50),
+    before_id: int | None = Query(default=None, ge=1),
+) -> dict[str, Any]:
+    try:
+        store = SupabaseVectorStore()
+        conversation = store.get_conversation(conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found.")
+        messages, has_more = store.get_conversation_messages(
+            conversation_id, limit=limit, before_id=before_id
+        )
+        return {
+            "conversation": conversation,
+            "messages": messages,
+            "has_more": has_more,
+            "next_before_id": messages[0]["id"] if has_more and messages else None,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/ingest")
 def ingest_repository(req: IngestRequest) -> dict[str, Any]:
     raw_url = req.repo_url.strip()
@@ -167,7 +221,6 @@ def chat_with_repo(req: ChatRequest) -> dict[str, Any]:
             user_message=req.message,
             repo_id=req.repo_id,
             conversation_id=conv_id,
-            history=req.history,
         )
 
         formatted_chunks = [
@@ -201,6 +254,8 @@ def chat_with_repo(req: ChatRequest) -> dict[str, Any]:
             "cited_chunk_ids": turn.cited_chunk_ids,
             "chunks": formatted_chunks,
         }
+    except (QueryRewriteError, RerankerServiceError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
