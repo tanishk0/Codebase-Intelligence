@@ -1,6 +1,9 @@
+import asyncio
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -11,7 +14,7 @@ from config import BACKEND_DIR, ROOT_DIR, settings
 from ingestion.chunker import TreeSitterChunker
 from ingestion.embedder import NvidiaEmbedder
 from ingestion.git_clone import RepoCloner
-from ingestion.loader import load_repository_files
+from ingestion.loader import build_file_manifest, load_repository_files
 from ingestion.summarizer import RepoSummarizer
 from ingestion.vector_store import SupabaseVectorStore
 from retrieval.chat_engine import ConversationalRAGEngine
@@ -21,8 +24,98 @@ from retrieval.reranker import RerankerServiceError
 from retrieval.retriever import CodebaseRetriever
 
 FRONTEND_DIR = ROOT_DIR / "frontend"
+LOCAL_REPO_URL = "https://github.com/local/codebase-copilot"
+_SYNC_LOCKS: dict[str, asyncio.Lock] = {}
 
-app = FastAPI(title="Codebase Copilot API", version="0.2.0")
+
+def _execute_ingest(raw_url: str, branch: str | None = None, llm_summaries: bool = False) -> dict[str, Any]:
+    """Loads files with SHA-256 hashes, chunks ASTs, and runs full or incremental indexing."""
+    store = SupabaseVectorStore()
+    embedder = NvidiaEmbedder()
+    llm_client = NvidiaChatClient() if llm_summaries else None
+    summarizer = RepoSummarizer(llm_client=llm_client)
+    chunker = TreeSitterChunker()
+
+    if raw_url.lower() == "local" or raw_url.rstrip("/") == LOCAL_REPO_URL:
+        files = load_repository_files(BACKEND_DIR)
+        chunks = chunker.chunk_all(files)
+        repo_url_key = LOCAL_REPO_URL
+        branch_label = branch if branch and branch.lower() != "default" else "main"
+    else:
+        cloner = RepoCloner(raw_url, branch=branch or None)
+        try:
+            repo_dir = cloner.clone()
+            files = load_repository_files(repo_dir)
+            chunks = chunker.chunk_all(files)
+            repo_url_key = raw_url.rstrip("/")
+            branch_label = cloner.resolved_branch
+        finally:
+            cloner.cleanup()
+
+    if not chunks:
+        raise ValueError("No indexable source files found in repository.")
+
+    repo_id = store.index_chunks(
+        repo_url=repo_url_key,
+        chunks=chunks,
+        embedder=embedder,
+        branch=branch_label,
+        files=files,
+        include_summaries=True,
+        summarizer=summarizer,
+        llm_summaries=llm_summaries,
+    )
+    repo_meta = store.get_repository(repo_id) or {}
+    return {
+        "repo_id": repo_id,
+        "repo_url": repo_url_key,
+        "file_count": len(files),
+        "ast_chunk_count": len(chunks),
+        "total_indexed_chunks": repo_meta.get("chunk_count", len(chunks)),
+        **store.last_sync_stats,
+    }
+
+
+async def _background_local_sync_loop() -> None:
+    """Watches the local workspace and asynchronously re-embeds only changed files when saved."""
+    while True:
+        await asyncio.sleep(15)
+        if not (settings.NVIDIA_API_KEY and settings.SUPABASE_URL and settings.SUPABASE_KEY):
+            continue
+        try:
+            store = SupabaseVectorStore()
+            repos = await asyncio.to_thread(store.list_repositories)
+            local_repo = next((r for r in repos if r.get("repo_url") == LOCAL_REPO_URL), None)
+            if not local_repo:
+                continue
+
+            repo_id = str(local_repo["id"])
+            full_meta = await asyncio.to_thread(store.get_repository, repo_id)
+            old_hashes = (full_meta or {}).get("file_hashes")
+            if not isinstance(old_hashes, dict) or not old_hashes:
+                continue
+
+            files = await asyncio.to_thread(load_repository_files, BACKEND_DIR)
+            new_hashes = build_file_manifest(files)
+            if new_hashes != old_hashes:
+                lock = _SYNC_LOCKS.setdefault(LOCAL_REPO_URL, asyncio.Lock())
+                if not lock.locked():
+                    async with lock:
+                        await asyncio.to_thread(_execute_ingest, "local", local_repo.get("branch") or "main", False)
+        except Exception:
+            pass
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    sync_task = asyncio.create_task(_background_local_sync_loop())
+    try:
+        yield
+    finally:
+        sync_task.cancel()
+
+
+app = FastAPI(title="Codebase Copilot API", version="0.2.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -46,6 +139,23 @@ class ChatRequest(BaseModel):
 
 class CreateConversationRequest(BaseModel):
     title: str = "New chat"
+
+
+@dataclass
+class AuthContext:
+    """Request-scoped auth context; plug JWT/Supabase Auth verification here when auth is enabled."""
+    user_id: str | None = None
+    access_token: str | None = None
+
+
+def get_auth_context(
+    authorization: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+) -> AuthContext:
+    token = None
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip() or None
+    return AuthContext(user_id=x_user_id, access_token=token)
 
 
 @app.get("/api/health")
@@ -142,56 +252,71 @@ def get_conversation_messages(
 
 
 @app.post("/api/ingest")
-def ingest_repository(req: IngestRequest) -> dict[str, Any]:
+async def ingest_repository(
+    req: IngestRequest,
+    _auth: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
     raw_url = req.repo_url.strip()
     if not raw_url:
         raise HTTPException(status_code=400, detail="Repository URL is required.")
 
+    lock_key = LOCAL_REPO_URL if raw_url.lower() == "local" else raw_url.rstrip("/")
+    lock = _SYNC_LOCKS.setdefault(lock_key, asyncio.Lock())
+    try:
+        async with lock:
+            return await asyncio.to_thread(_execute_ingest, raw_url, req.branch, req.llm_summaries)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/repos/{repo_id}/reindex")
+async def reindex_repository(
+    repo_id: str,
+    _auth: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    """Incrementally re-indexes an existing repository (re-embedding only files whose SHA-256 hash changed)."""
     try:
         store = SupabaseVectorStore()
-        embedder = NvidiaEmbedder()
-        llm_client = NvidiaChatClient() if req.llm_summaries else None
-        summarizer = RepoSummarizer(llm_client=llm_client)
-        chunker = TreeSitterChunker()
+        repo = await asyncio.to_thread(store.get_repository, repo_id)
+        if not repo:
+            raise HTTPException(status_code=404, detail="Repository not found.")
+        repo_url = str(repo["repo_url"])
+        branch = str(repo.get("branch") or "main")
 
-        # Shortcut: allow typing "local" to index this local backend workspace in seconds without git clone
-        if raw_url.lower() == "local":
-            files = load_repository_files(BACKEND_DIR)
-            chunks = chunker.chunk_all(files)
-            repo_url_key = "https://github.com/local/codebase-copilot"
-            branch_label = req.branch or "main"
-        else:
-            cloner = RepoCloner(raw_url, branch=req.branch or None)
-            try:
-                repo_dir = cloner.clone()
-                files = load_repository_files(repo_dir)
-                chunks = chunker.chunk_all(files)
-                repo_url_key = raw_url.rstrip("/")
-                branch_label = req.branch or "default"
-            finally:
-                cloner.cleanup()
+        lock = _SYNC_LOCKS.setdefault(repo_url, asyncio.Lock())
+        async with lock:
+            return await asyncio.to_thread(_execute_ingest, repo_url, branch, False)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        if not chunks:
-            raise HTTPException(status_code=400, detail="No indexable source files found in repository.")
 
-        repo_id = store.index_chunks(
-            repo_url=repo_url_key,
-            chunks=chunks,
-            embedder=embedder,
-            branch=branch_label,
-            files=files,
-            include_summaries=True,
-            summarizer=summarizer,
-            llm_summaries=req.llm_summaries,
-        )
-        repo_meta = store.get_repository(repo_id) or {}
-        return {
-            "repo_id": repo_id,
-            "repo_url": repo_url_key,
-            "file_count": len(files),
-            "ast_chunk_count": len(chunks),
-            "total_indexed_chunks": repo_meta.get("chunk_count", len(chunks)),
-        }
+@app.post("/api/repos/{repo_id}/sync")
+async def sync_repository_async(
+    repo_id: str,
+    background_tasks: BackgroundTasks,
+    _auth: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    """Queues an asynchronous incremental SHA-256 sync for an existing repository."""
+    try:
+        store = SupabaseVectorStore()
+        repo = store.get_repository(repo_id)
+        if not repo:
+            raise HTTPException(status_code=404, detail="Repository not found.")
+        repo_url = str(repo["repo_url"])
+        branch = str(repo.get("branch") or "main")
+
+        async def _bg_job() -> None:
+            lock = _SYNC_LOCKS.setdefault(repo_url, asyncio.Lock())
+            if not lock.locked():
+                async with lock:
+                    await asyncio.to_thread(_execute_ingest, repo_url, branch, False)
+
+        background_tasks.add_task(_bg_job)
+        return {"status": "queued", "repo_id": repo_id, "repo_url": repo_url}
     except HTTPException:
         raise
     except Exception as exc:
