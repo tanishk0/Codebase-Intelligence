@@ -11,6 +11,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from ingestion.chunker import CodeChunk
 from ingestion.embedder import EmbeddedChunk, EmbeddingError, NvidiaEmbedder, RateLimiter, parse_retry_after
+from ingestion.loader import LoadedFile
 from ingestion.vector_store import SupabaseVectorStore
 
 
@@ -241,6 +242,54 @@ class TestSupabaseVectorStore(unittest.TestCase):
                 },
             ),
         ])
+
+    def test_incremental_sync_skips_unchanged_and_reembeds_only_changed_files(self) -> None:
+        unchanged_file = LoadedFile("a.py", "def a(): return 1\n", ".py", 18)
+        changed_file = LoadedFile("b.py", "def b(): return 22\n", ".py", 19)
+
+        self.repo_table.select.return_value.eq.return_value.execute.return_value.data = [
+            {
+                "id": "repo-1",
+                "active_run_id": "run-existing",
+                "embed_model": "test-model",
+                "embedding_dim": 2,
+                "file_hashes": {
+                    "a.py": unchanged_file.content_hash,
+                    "b.py": "old-hash-for-b",
+                    "deleted.py": "old-hash-for-deleted",
+                },
+            }
+        ]
+
+        embedded_inputs: list[list[str]] = []
+        embedder = MagicMock()
+        embedder.model = "test-model"
+        embedder.dimensions = 2
+
+        def fake_iter(chunks_to_embed):
+            embedded_inputs.append([c.file_path for c in chunks_to_embed])
+            yield [EmbeddedChunk(c, [0.1, 0.2]) for c in chunks_to_embed]
+
+        embedder.iter_embedded_chunks.side_effect = fake_iter
+
+        chunks = [
+            CodeChunk("a.py", "def a(): return 1", 1, 1, "function", symbol_name="a"),
+            CodeChunk("b.py", "def b(): return 22", 1, 1, "function", symbol_name="b"),
+        ]
+        self.store.index_chunks(
+            "https://github.com/org/repo",
+            chunks=chunks,
+            embedder=embedder,
+            files=[unchanged_file, changed_file],
+            include_summaries=True,
+        )
+
+        # Only b.py (its AST chunk + its file_summary) was sent to the embedder; a.py was skipped!
+        self.assertEqual(embedded_inputs, [["b.py", "b.py"]])
+        self.assertEqual(self.store.last_sync_stats["changed_files"], 1)
+        self.assertEqual(self.store.last_sync_stats["unchanged_files"], 1)
+        self.assertEqual(self.store.last_sync_stats["deleted_files"], 1)
+        self.assertEqual(self.store.last_sync_stats["embedded_chunks"], 2)
 
 
 if __name__ == "__main__":
