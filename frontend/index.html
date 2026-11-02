@@ -78,7 +78,7 @@
       <div id="chat-messages" class="chat-messages">
         <div class="welcome-state">
           <h3>Ask anything about your codebase</h3>
-          <p>Every question runs unified <strong>Hybrid Search (Keyword FTS + Semantic pgvector via RRF)</strong>, code-aware reranking, class/import context expansion, and multi-turn follow-up rewriting.</p>
+          <p>Every question runs <strong>BM25 + semantic vector retrieval</strong>, a cross-encoder reranker, and code-context expansion.</p>
           <div class="sample-prompts">
             <button class="prompt-chip" data-prompt="What does this repository do and how are the modules organized?">
               What does this repository do?
