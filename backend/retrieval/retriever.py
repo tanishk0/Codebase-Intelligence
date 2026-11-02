@@ -113,17 +113,10 @@ class CodebaseRetriever:
             # Calls and base classes are stored as bare names, not resolved target identities.
             # Expanding them would frequently attach unrelated symbols, so use only qualified callers.
             raw_edges: list[str] = []
-            max_len = max(len(called_by_list), len(inherits_list), len(calls_list), 0)
-            for idx in range(max_len):
-                if idx < len(called_by_list):
-                    raw_edges.append(called_by_list[idx])
-                if idx < len(inherits_list):
-                    raw_edges.append(inherits_list[idx])
-                if idx < len(calls_list):
-                    raw_edges.append(calls_list[idx])
+            raw_edges.extend(edge for edge in called_by_list if "." in edge)
 
             for sym in raw_edges:
-                bare = sym.split(".")[-1]
+                bare = sym.rsplit(".", 1)[-1]
                 if not bare or bare in primary_symbols or sym in seen:
                     continue
                 seen.add(sym)
@@ -134,7 +127,7 @@ class CodebaseRetriever:
     def retrieve(
         self,
         user_message: str,
-        repo_id: str | None = None,
+        repo_id: str,
         *,
         history: list[dict[str, Any]] | None = None,
         rolling_summary: str = "",
@@ -142,7 +135,11 @@ class CodebaseRetriever:
     ) -> RetrievalResult:
         plan = self.router.plan(user_message, history=history, rolling_summary=rolling_summary)
 
-        repo_meta = self.store.get_repository(repo_id) if repo_id else None
+        if not repo_id:
+            raise ValueError("Select an indexed repository before asking a question.")
+        repo_meta = self.store.get_repository(repo_id)
+        if repo_meta is None:
+            raise ValueError("The selected repository no longer exists. Refresh the repository list and try again.")
         repo_summary = str((repo_meta or {}).get("repo_summary") or "")
 
         if not plan.needs_retrieval:
@@ -160,12 +157,20 @@ class CodebaseRetriever:
         # 2. Carry over chunks cited in the previous turn so follow-ups stay grounded
         carry_set = set(carryover_chunk_ids or [])
         if carry_set:
-            for item in self.store.fetch_chunks_by_ids(list(carry_set)):
+            for item in self.store.fetch_chunks_by_ids(repo_id, list(carry_set)):
                 item.setdefault("similarity", 0.45)
                 candidates.append(item)
 
-        # 3. Rerank and apply per-file diversity caps
-        top_chunks = self.reranker.rerank(candidates, plan=plan, carryover_ids=carry_set)
+        # 3. The cross-encoder sees every unique hybrid candidate and determines final top-K order.
+        # Do not heuristically prune the candidate set before model scoring.
+        model_candidates = NvidiaCrossEncoderReranker.deduplicate(candidates)
+        if len(model_candidates) > 1000:
+            raise RuntimeError("Too many retrieval candidates for the reranking model. Reduce RETRIEVAL_CANDIDATE_POOL.")
+        top_chunks = self.model_reranker.rerank(
+            plan.standalone_query,
+            model_candidates,
+            top_k=settings.RETRIEVAL_TOP_K,
+        )
 
         # 4. Expand context with enclosing class headers, file preambles, and 1-hop dependency neighbors (capped at 4)
         neighbors: list[dict[str, Any]] = []
@@ -187,4 +192,9 @@ class CodebaseRetriever:
 
         # 5. Merge overlapping spans and enforce token budget
         assembled = self.assembler.assemble(top_chunks, neighbor_chunks=neighbors)
-        return RetrievalResult(plan=plan, chunks=assembled, repo_summary=repo_summary)
+        return RetrievalResult(
+            plan=plan,
+            chunks=assembled,
+            repo_summary=repo_summary,
+            no_relevant_code=not top_chunks,
+        )
