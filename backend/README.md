@@ -11,7 +11,7 @@ High-performance codebase ingestion, AST chunking, hierarchical summarization, h
 - **`ingestion/chunker.py`**: Tree-sitter powered AST chunker supporting Python, JavaScript, TypeScript, and TSX with symbol extraction, oversized function splitting, class headers, and camelCase/snake_case identifier splitting for full-text search.
 - **`ingestion/summarizer.py`**: Outline-based file and repository summarizer (`file_summary` chunks + `repo_summary` overview) with optional batched LLM enrichment.
 - **`ingestion/embedder.py`**: Batched NVIDIA NIM embedding client (`nvidia/nemotron-3.5-embed-1b`, 1024-dim) with passage/query asymmetric encoding, client-side rate limiting, and retry backoff.
-- **`ingestion/vector_store.py`**: Crash-safe Supabase (`pgvector` + FTS) store with atomic `run_id` swaps, hybrid RRF search, symbol lookup, context neighbor queries, and multi-turn conversation storage.
+- **`ingestion/vector_store.py`**: Crash-safe Supabase store with atomic `run_id` swaps, independent pgvector and BM25 retrieval fused by RRF, symbol lookup, context neighbor queries, and multi-turn conversation storage.
 
 ### Retrieval & Conversational RAG (`retrieval/`)
 - **`retrieval/llm.py`**: Dual-tier NVIDIA NIM chat client pairing `nvidia/nemotron-3-ultra-550b-a55b` (deep code answers) with `nvidia/nemotron-3.5-bolt-e4b` (fast query rewriting & batched summaries).
