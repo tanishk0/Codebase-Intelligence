@@ -1,85 +1,24 @@
-const state = {
-  repos: [],
-  activeRepoId: null,
-  activeRepoUrl: null,
-  conversationId: null,
-  history: [],
-};
-
+const state = { repos: [], activeRepoId: null, activeRepoUrl: null, conversations: [], conversationId: null, oldestMessageId: null, hasMoreMessages: false, loadingOlder: false };
 const els = {
-  ingestForm: document.getElementById("ingest-form"),
-  repoUrlInput: document.getElementById("repo-url"),
-  repoBranchInput: document.getElementById("repo-branch"),
-  llmSummariesInput: document.getElementById("llm-summaries"),
-  ingestBtn: document.getElementById("ingest-btn"),
-  ingestLocalBtn: document.getElementById("ingest-local-btn"),
-  ingestStatus: document.getElementById("ingest-status"),
-  reposList: document.getElementById("repos-list"),
-  refreshReposBtn: document.getElementById("refresh-repos-btn"),
-  activeRepoLabel: document.getElementById("active-repo-label"),
-  healthBanner: document.getElementById("health-banner"),
-  healthAlert: document.getElementById("health-alert"),
-  newChatBtn: document.getElementById("new-chat-btn"),
-  chatMessages: document.getElementById("chat-messages"),
-  chatForm: document.getElementById("chat-form"),
-  chatInput: document.getElementById("chat-input"),
-  sendBtn: document.getElementById("send-btn"),
+  ingestForm: document.getElementById("ingest-form"), repoUrlInput: document.getElementById("repo-url"), repoBranchInput: document.getElementById("repo-branch"), llmSummariesInput: document.getElementById("llm-summaries"), ingestBtn: document.getElementById("ingest-btn"), ingestLocalBtn: document.getElementById("ingest-local-btn"), ingestStatus: document.getElementById("ingest-status"), reposList: document.getElementById("repos-list"), refreshReposBtn: document.getElementById("refresh-repos-btn"), activeRepoLabel: document.getElementById("active-repo-label"), healthBanner: document.getElementById("health-banner"), healthAlert: document.getElementById("health-alert"), newChatBtn: document.getElementById("new-chat-btn"), newSidebarChatBtn: document.getElementById("new-sidebar-chat-btn"), conversationsList: document.getElementById("conversations-list"), chatMessages: document.getElementById("chat-messages"), chatForm: document.getElementById("chat-form"), chatInput: document.getElementById("chat-input"), sendBtn: document.getElementById("send-btn"),
 };
 
-function escapeHtml(str) {
-  return String(str || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
+function escapeHtml(value) { return String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 function renderMarkdownLite(text) {
   let html = escapeHtml(text);
-  html = html.replace(/```(?:\w+)?\n([\s\S]*?)```/g, (_, code) => `<pre><code>${code.trim()}</code></pre>`);
-  html = html.replace(/`([^`\n]+)`/g, "<code>$1</code>");
-  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  const parts = html.split(/(<pre>[\s\S]*?<\/pre>)/g);
-  return parts
-    .map((p) => (p.startsWith("<pre>") ? p : p.replace(/\n/g, "<br/>")))
-    .join("");
+  html = html.replace(/```(?:\w+)?\n([\s\S]*?)```/g, (_, code) => `<pre><code>${code.trim()}</code></pre>`).replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  return html.split(/(<pre>[\s\S]*?<\/pre>)/g).map((part) => part.startsWith("<pre>") ? part : part.replace(/\n/g, "<br/>")) .join("");
 }
+function welcome() { return `<div class="welcome-state"><h3>Ask anything about your codebase</h3><p>Select a repository, start a chat, and your conversation will be saved here.</p></div>`; }
+function scrollBottom() { els.chatMessages.scrollTop = els.chatMessages.scrollHeight; }
+async function api(url, options) { const res = await fetch(url, options); const data = await res.json(); if (!res.ok) throw new Error(data.detail || "Request failed"); return data; }
 
 async function checkHealth() {
   try {
-    const res = await fetch("/api/health");
-    const data = await res.json();
-    if (data.ok) {
-      els.healthBanner.textContent = `Ready • ${data.chat_model} + Hybrid RRF (${data.embed_model})`;
-      els.healthAlert.classList.add("hidden");
-    } else {
-      els.healthBanner.textContent = "Configuration check needed";
-      els.healthAlert.innerHTML =
-        `<strong>Setup Check:</strong><br/>` +
-        data.issues.map((i) => `• ${escapeHtml(i)}`).join("<br/>");
-      els.healthAlert.classList.remove("hidden");
-    }
-  } catch (err) {
-    els.healthBanner.textContent = "Backend unreachable";
-  }
-}
-
-async function loadRepositories() {
-  try {
-    const res = await fetch("/api/repos");
-    if (!res.ok) {
-      const err = await res.json();
-      els.reposList.innerHTML = `<div class="empty-hint">${escapeHtml(err.detail || "Unable to load repos")}</div>`;
-      return;
-    }
-    const data = await res.json();
-    state.repos = data.repos || [];
-    renderRepos();
-    if (!state.activeRepoId && state.repos.length > 0) {
-      selectRepo(state.repos[0]);
-    }
-  } catch (err) {
-    els.reposList.innerHTML = `<div class="empty-hint">Connect Supabase to view indexed repos.</div>`;
-  }
+    const data = await api("/api/health");
+    if (data.ok) { els.healthBanner.textContent = `Ready • ${data.chat_model} + BM25/vector retrieval`; els.healthAlert.classList.add("hidden"); }
+    else { els.healthBanner.textContent = "Configuration check needed"; els.healthAlert.innerHTML = `<strong>Setup Check:</strong><br/>${data.issues.map((item) => `• ${escapeHtml(item)}`).join("<br/>")}`; els.healthAlert.classList.remove("hidden"); }
+  } catch { els.healthBanner.textContent = "Backend unreachable"; }
 }
 
 function renderRepos() {
