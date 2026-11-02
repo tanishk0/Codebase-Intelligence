@@ -43,6 +43,9 @@ def _collect_identifiers(node, code_bytes: bytes, out: list[str], *, allow_this:
 @dataclass
 class _FileASTSummary:
     raw_imports: list[tuple[str, list[str]]] = field(default_factory=list)
+    # Maps the local name used at a call site to the symbol's exported name.
+    # For example: ``from crypto import verify as verify_token``.
+    import_aliases: dict[str, str] = field(default_factory=dict)
     inheritance: dict[str, list[str]] = field(default_factory=lambda: defaultdict(list))
     class_methods: dict[str, list[str]] = field(default_factory=lambda: defaultdict(list))
     calls: list[tuple[int, str, str]] = field(default_factory=list)  # (line_number, receiver, callee)
@@ -165,7 +168,18 @@ class DependencyAnalyzer:
                         elif child.type == "aliased_import":
                             orig = next((c for c in child.children if c.type == "dotted_name"), None)
                             if orig:
-                                imported_syms.append(get_node_text(orig, code_bytes))
+                                original_name = get_node_text(orig, code_bytes)
+                                imported_syms.append(original_name)
+                                local_name = next(
+                                    (
+                                        get_node_text(c, code_bytes)
+                                        for c in child.children
+                                        if c.type == "identifier"
+                                    ),
+                                    "",
+                                )
+                                if local_name:
+                                    summary.import_aliases[local_name] = original_name
                 summary.raw_imports.append((module_spec, imported_syms))
                 return
 
