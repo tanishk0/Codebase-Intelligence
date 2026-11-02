@@ -229,7 +229,7 @@ class CodeReranker:
         top_score = ranked[0]["rerank_score"] if ranked else 0.0
 
         for chunk in ranked:
-            if len(selected) >= self.top_k:
+            if len(selected) >= result_limit:
                 break
             # Dynamic cutoff: drop trailing noise if score falls below 35% of top score (after at least 3 results)
             if len(selected) >= 3 and top_score > 0 and chunk["rerank_score"] < top_score * 0.35:
@@ -263,16 +263,24 @@ class ContextAssembler:
             return []
 
         merged: list[dict[str, Any]] = []
-        by_file: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        by_source_unit: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
         passthrough: list[dict[str, Any]] = []
 
         for c in chunks:
             if c.get("node_type") in {"file_summary", "class_header", "module_preamble"}:
                 passthrough.append(c)
             else:
-                by_file[str(c.get("file_path") or "")].append(c)
+                # Only chunks from the same source unit may be joined. In particular,
+                # adjacent methods and top-level functions must retain their metadata.
+                key = (
+                    str(c.get("file_path") or ""),
+                    str(c.get("node_type") or ""),
+                    str(c.get("parent_class") or ""),
+                    str(c.get("symbol_name") or ""),
+                )
+                by_source_unit[key].append(c)
 
-        for fp, file_chunks in by_file.items():
+        for (fp, _, _, _), file_chunks in by_source_unit.items():
             ordered = sorted(file_chunks, key=lambda x: (int(x.get("start_line") or 0), int(x.get("end_line") or 0)))
             current = dict(ordered[0])
 
@@ -347,7 +355,9 @@ class ContextAssembler:
 
         for chunk in merged_primary + supporting:
             content = str(chunk.get("content") or "")
-            if used_chars + len(content) > char_budget and final_chunks:
+            # Keep the budget strict. Sending partial code without an explicit user
+            # request is more misleading than omitting a chunk that does not fit.
+            if used_chars + len(content) > char_budget:
                 continue
             final_chunks.append(chunk)
             used_chars += len(content)
