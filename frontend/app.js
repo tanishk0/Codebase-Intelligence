@@ -1,6 +1,6 @@
-const state = { repos: [], activeRepoId: null, activeRepoUrl: null, conversations: [], conversationId: null, oldestMessageId: null, hasMoreMessages: false, loadingOlder: false };
+const state = { repos: [], activeRepoId: null, activeRepoUrl: null, conversations: [], conversationId: null, oldestMessageId: null, hasMoreMessages: false, loadingOlder: false, authToken: null };
 const els = {
-  ingestForm: document.getElementById("ingest-form"), repoUrlInput: document.getElementById("repo-url"), repoBranchInput: document.getElementById("repo-branch"), llmSummariesInput: document.getElementById("llm-summaries"), ingestBtn: document.getElementById("ingest-btn"), ingestLocalBtn: document.getElementById("ingest-local-btn"), ingestStatus: document.getElementById("ingest-status"), reposList: document.getElementById("repos-list"), refreshReposBtn: document.getElementById("refresh-repos-btn"), activeRepoLabel: document.getElementById("active-repo-label"), healthBanner: document.getElementById("health-banner"), healthAlert: document.getElementById("health-alert"), newChatBtn: document.getElementById("new-chat-btn"), newSidebarChatBtn: document.getElementById("new-sidebar-chat-btn"), conversationsList: document.getElementById("conversations-list"), chatMessages: document.getElementById("chat-messages"), chatForm: document.getElementById("chat-form"), chatInput: document.getElementById("chat-input"), sendBtn: document.getElementById("send-btn"),
+  ingestForm: document.getElementById("ingest-form"), repoUrlInput: document.getElementById("repo-url"), repoBranchInput: document.getElementById("repo-branch"), llmSummariesInput: document.getElementById("llm-summaries"), ingestBtn: document.getElementById("ingest-btn"), ingestLocalBtn: document.getElementById("ingest-local-btn"), ingestStatus: document.getElementById("ingest-status"), reposList: document.getElementById("repos-list"), refreshReposBtn: document.getElementById("refresh-repos-btn"), activeRepoLabel: document.getElementById("active-repo-label"), healthBanner: document.getElementById("health-banner"), healthAlert: document.getElementById("health-alert"), reindexRepoBtn: document.getElementById("reindex-repo-btn"), newChatBtn: document.getElementById("new-chat-btn"), newSidebarChatBtn: document.getElementById("new-sidebar-chat-btn"), conversationsList: document.getElementById("conversations-list"), chatMessages: document.getElementById("chat-messages"), chatForm: document.getElementById("chat-form"), chatInput: document.getElementById("chat-input"), sendBtn: document.getElementById("send-btn"),
 };
 
 function escapeHtml(value) { return String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
@@ -11,7 +11,14 @@ function renderMarkdownLite(text) {
 }
 function welcome() { return `<div class="welcome-state"><h3>Ask anything about your codebase</h3><p>Select a repository, start a chat, and your conversation will be saved here.</p></div>`; }
 function scrollBottom() { els.chatMessages.scrollTop = els.chatMessages.scrollHeight; }
-async function api(url, options) { const res = await fetch(url, options); const data = await res.json(); if (!res.ok) throw new Error(data.detail || "Request failed"); return data; }
+async function api(url, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (state.authToken) headers["Authorization"] = `Bearer ${state.authToken}`;
+  const res = await fetch(url, { ...options, headers });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || "Request failed");
+  return data;
+}
 
 async function checkHealth() {
   try {
@@ -100,14 +107,42 @@ async function sendChatMessage(message) {
   } catch (err) { thinking.textContent = `Error: ${err.message}`; }
   finally { els.sendBtn.disabled = false; els.chatInput.disabled = false; els.chatInput.focus(); }
 }
+function formatSyncMessage(data) {
+  if (typeof data.unchanged_files === "number" && data.unchanged_files > 0) {
+    if ((data.changed_files || 0) === 0 && (data.deleted_files || 0) === 0) {
+      return `✓ Up to date: ${data.unchanged_files} files unchanged (0 chunks re-embedded).`;
+    }
+    return `✓ Synced: ${data.changed_files || 0} changed, ${data.unchanged_files} unchanged (${data.embedded_chunks || 0} chunks re-embedded).`;
+  }
+  return `✓ Indexed ${data.file_count} files (${data.total_indexed_chunks} chunks).`;
+}
+
 async function triggerIngest(repoUrl, branch, llmSummaries) {
-  els.ingestBtn.disabled = true; els.ingestLocalBtn.disabled = true; els.ingestStatus.textContent = `Indexing ${repoUrl}...`;
-  try { const data = await api("/api/ingest", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo_url: repoUrl, branch: branch || null, llm_summaries: llmSummaries }) }); els.ingestStatus.textContent = `✓ Indexed ${data.file_count} files (${data.total_indexed_chunks} chunks).`; await checkHealth(); await loadRepositories(); const created = state.repos.find((repo) => repo.id === data.repo_id); if (created) await selectRepo(created); }
-  catch (err) { els.ingestStatus.textContent = `✗ ${err.message}`; } finally { els.ingestBtn.disabled = false; els.ingestLocalBtn.disabled = false; }
+  els.ingestBtn.disabled = true; els.ingestLocalBtn.disabled = true; els.reindexRepoBtn.disabled = true; els.ingestStatus.textContent = `Indexing ${repoUrl}...`;
+  try { const data = await api("/api/ingest", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo_url: repoUrl, branch: branch || null, llm_summaries: llmSummaries }) }); els.ingestStatus.textContent = formatSyncMessage(data); await checkHealth(); await loadRepositories(); const created = state.repos.find((repo) => repo.id === data.repo_id); if (created) await selectRepo(created); }
+  catch (err) { els.ingestStatus.textContent = `✗ ${err.message}`; } finally { els.ingestBtn.disabled = false; els.ingestLocalBtn.disabled = false; els.reindexRepoBtn.disabled = false; }
+}
+
+async function reindexActiveRepo() {
+  if (!state.activeRepoId) { els.ingestStatus.textContent = "Select a repository to re-index."; return; }
+  els.reindexRepoBtn.disabled = true; els.ingestBtn.disabled = true; els.ingestLocalBtn.disabled = true;
+  els.ingestStatus.textContent = `Re-indexing changed files in ${state.activeRepoUrl || "repository"}...`;
+  try {
+    const data = await api(`/api/repos/${encodeURIComponent(state.activeRepoId)}/reindex`, { method: "POST" });
+    els.ingestStatus.textContent = formatSyncMessage(data);
+    await loadRepositories();
+    const updated = state.repos.find((repo) => repo.id === state.activeRepoId);
+    if (updated) els.activeRepoLabel.textContent = `${updated.repo_url.replace("https://github.com/", "")} (${updated.chunk_count} chunks)`;
+  } catch (err) {
+    els.ingestStatus.textContent = `✗ ${err.message}`;
+  } finally {
+    els.reindexRepoBtn.disabled = false; els.ingestBtn.disabled = false; els.ingestLocalBtn.disabled = false;
+  }
 }
 
 els.ingestForm.addEventListener("submit", (event) => { event.preventDefault(); triggerIngest(els.repoUrlInput.value.trim(), els.repoBranchInput.value.trim(), els.llmSummariesInput.checked); });
 els.ingestLocalBtn.addEventListener("click", () => { els.repoUrlInput.value = "local"; triggerIngest("local", "main", els.llmSummariesInput.checked); });
+els.reindexRepoBtn.addEventListener("click", reindexActiveRepo);
 els.refreshReposBtn.addEventListener("click", loadRepositories); els.newChatBtn.addEventListener("click", newConversation); els.newSidebarChatBtn.addEventListener("click", newConversation);
 els.chatForm.addEventListener("submit", (event) => { event.preventDefault(); const message = els.chatInput.value.trim(); if (!message) return; els.chatInput.value = ""; sendChatMessage(message); });
 els.chatInput.addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); els.chatForm.requestSubmit(); } });
