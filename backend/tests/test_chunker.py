@@ -1,100 +1,91 @@
-from pathlib import Path
-import sys
-import unittest
-
-BACKEND_DIR = Path(__file__).resolve().parent.parent
-if str(BACKEND_DIR) not in sys.path:
-    sys.path.insert(0, str(BACKEND_DIR))
-
-from ingestion.chunker import TreeSitterChunker
-from ingestion.loader import LoadedFile
-
-
-class TestTreeSitterChunker(unittest.TestCase):
-    def setUp(self) -> None:
-        # Use a small max_class_lines threshold so we can easily test both small and large class splitting
-        self.chunker = TreeSitterChunker(max_class_lines=10)
-
-    def test_python_chunking(self) -> None:
-        py_code = """import os
-
-GLOBAL_LIMIT = 100
-
-class SmallClass:
-    def ping(self) -> str:
-        return "pong"
-
-class LargeService:
-    \"\"\"Large class that exceeds 10 lines.\"\"\"
-    timeout = 30
-
-    def first_method(self):
-        x = 1
-        y = 2
-        return x + y
-
-    @staticmethod
-    def second_method(a, b):
-        res = a * b
-        return res
-
-def standalone_helper():
-    return GLOBAL_LIMIT
-"""
-        loaded = LoadedFile(
-            file_path="src/service.py",
-            content=py_code,
-            extension=".py",
-            size_bytes=len(py_code),
-        )
-        chunks = self.chunker.chunk_file(loaded)
-        by_type = [(c.node_type, c.parent_class, c.start_line, c.end_line) for c in chunks]
-
-        self.assertEqual(
-            by_type,
-            [
-                ("module_preamble", "", 1, 3),
-                ("class", "SmallClass", 5, 7),
-                ("class_header", "LargeService", 9, 11),
-                ("method", "LargeService", 13, 16),
-                ("method", "LargeService", 18, 21),
-                ("function", "", 23, 24),
-            ],
-        )
-
-    def test_typescript_chunking(self) -> None:
-        ts_code = """import { Request } from 'express';
-
-export interface User {
-    id: string;
-}
-
-export class SmallRepo {
-    find() { return null; }
-}
-
-@Injectable()
-export class LargeController {
-    private readonly version = 'v1';
-
-    async getUser(req: Request) {
-        const id = req.params.id;
-        return { id };
-    }
-
-    fetchAll = async () => {
-        const items = [];
-        return items;
-    };
-}
-
-export function formatName(name: string): string {
-    return name.trim();
-}
-
-export const computeScore = (a: number, b: number) => {
-    return a + b;
-};
+from pathlib import Path
+import sys
+import unittest
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+from ingestion.chunker import TreeSitterChunker
+from ingestion.loader import LoadedFile
+
+
+class TestTreeSitterChunker(unittest.TestCase):
+    def setUp(self) -> None:
+        # Use a small max_class_lines threshold so we can easily test both small and large class splitting
+        self.chunker = TreeSitterChunker(max_class_lines=10)
+
+    def test_python_chunking(self) -> None:
+        py_code = """import os
+
+GLOBAL_LIMIT = 100
+
+class SmallClass:
+    def ping(self) -> str:
+        return "pong"
+
+class LargeService:
+    \"\"\"Large class that exceeds 10 lines.\"\"\"
+    timeout = 30
+
+    def first_method(self):
+        x = 1
+        y = 2
+        return x + y
+
+    @staticmethod
+    def second_method(a, b):
+        res = a * b
+        return res
+
+def standalone_helper():
+    return GLOBAL_LIMIT
+"""
+        loaded = LoadedFile(
+            file_path="src/service.py",
+            content=py_code,
+            extension=".py",
+            size_bytes=len(py_code),
+        )
+        chunks = self.chunker.chunk_file(loaded)
+        by_type = [(c.node_type, c.parent_class, c.start_line, c.end_line) for c in chunks]
+
+        self.assertEqual(
+            by_type,
+            [
+                ("module_preamble", "", 1, 3),
+                ("class", "SmallClass", 5, 7),
+                ("class_header", "LargeService", 9, 11),
+                ("method", "LargeService", 13, 16),
+                ("method", "LargeService", 18, 21),
+                ("function", "", 23, 24),
+            ],
+        )
+
+    def test_typescript_chunking(self) -> None:
+        ts_code = """import { Request } from 'express';
+
+export interface User {
+    id: string;
+}
+
+export class SmallRepo {
+    find() { return null; }
+}
+
+@Injectable()
+export class LargeController {
+    private readonly version = 'v1';
+
+    async getUser(req: Request) {
+        const id = req.params.id;
+        return { id };
+    }
+
+    fetchAll = async () => {
+        const items = [];
+        return items;
+    };
 }
 
 export function formatName(name: string): string {
@@ -126,6 +117,24 @@ export const computeScore = (a: number, b: number) => {
                 ("function", "", 30, 32),
             ],
         )
+
+    def test_large_class_keeps_members_declared_between_methods(self) -> None:
+        code = """class Service:
+    def first(self):
+        return 1
+
+    timeout = 30
+
+    def second(self):
+        return 2
+"""
+        chunks = TreeSitterChunker(max_class_lines=4).chunk_file(
+            LoadedFile("src/service.py", code, ".py", len(code))
+        )
+
+        member = next(c for c in chunks if c.node_type == "class_member")
+        self.assertEqual(member.parent_class, "Service")
+        self.assertIn("timeout = 30", member.content)
 
     def test_tsx_and_jsx_chunking(self) -> None:
         tsx_code = """import React from 'react';
