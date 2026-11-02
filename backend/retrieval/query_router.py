@@ -147,5 +147,8 @@ class QueryRouter:
             needs_retrieval = bool(data.get("needs_retrieval", True))
             rewritten = str(data.get("standalone_query") or user_message).strip()
             return (rewritten or user_message), needs_retrieval
-        except Exception:
-            return user_message, True
+        except Exception as exc:
+            raise QueryRewriteError(
+                "I couldn't resolve this follow-up because the AI service is unavailable. "
+                "Please try again in a moment or ask a self-contained question."
+            ) from exc
