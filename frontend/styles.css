@@ -307,6 +307,12 @@ textarea:focus {
   align-items: center;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .active-repo-title {
   font-size: 14px;
   font-weight: 600;
