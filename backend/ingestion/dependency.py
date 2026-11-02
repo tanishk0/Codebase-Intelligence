@@ -394,7 +394,8 @@ class DependencyAnalyzer:
                     continue
                 if not callee or callee in IGNORED_CALL_NAMES or callee == c.symbol_name:
                     continue
-                target_defs = defs_by_symbol.get(callee)
+                resolved_name = file_ast.import_aliases.get(callee, callee)
+                target_defs = defs_by_symbol.get(resolved_name)
                 if not target_defs:
                     continue
 
@@ -404,6 +405,11 @@ class DependencyAnalyzer:
                 if receiver in {"self", "cls", "this"} and c.parent_class:
                     allowed_classes = {c.parent_class} | set(c.inherits_from)
                     matched_targets = [t for t in target_defs if t.parent_class in allowed_classes]
+
+                # A receiver such as ``client.save()`` cannot be resolved safely without
+                # type/binding analysis. Do not invent same-file edges for it.
+                if receiver and receiver not in {"self", "cls", "this"}:
+                    continue
 
                 # Priority 2: Defined in the same file
                 if not matched_targets:
@@ -418,8 +424,8 @@ class DependencyAnalyzer:
                     matched_targets = target_defs
 
                 if matched_targets:
-                    if callee not in resolved_callees:
-                        resolved_callees.append(callee)
+                    if resolved_name not in resolved_callees:
+                        resolved_callees.append(resolved_name)
                     caller_label = (
                         f"{c.parent_class}.{c.symbol_name}"
                         if c.parent_class and c.symbol_name and c.parent_class != c.symbol_name
