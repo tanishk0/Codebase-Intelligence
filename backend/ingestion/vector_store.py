@@ -1,17 +1,19 @@
 from datetime import datetime, timezone
+import json
 import re
 from typing import Any
 import uuid
 from supabase import Client, create_client
-from config import settings
+from config import BACKEND_DIR, settings
 from ingestion.chunker import CodeChunk, build_search_text, split_identifier_tokens
 from ingestion.dependency import DependencyAnalyzer
 from ingestion.embedder import EmbeddedChunk, NvidiaEmbedder
-from ingestion.loader import LoadedFile
+from ingestion.loader import LoadedFile, build_file_manifest
 from ingestion.summarizer import RepoSummarizer
 
 _DEP_COLUMNS = ("imports", "imported_by", "calls", "called_by", "inherits_from")
 _BM25_TERM_RE = re.compile(r"[a-z0-9_]{2,}")
+_HASH_CACHE_PATH = BACKEND_DIR / ".repo_file_hashes.json"
 
 
 class SupabaseVectorStore:
@@ -25,6 +27,8 @@ class SupabaseVectorStore:
         client: Client | None = None,
     ) -> None:
         self.batch_size = batch_size or settings.SUPABASE_BATCH_SIZE
+        self.last_sync_stats: dict[str, int] = {}
+        self._use_disk_hash_cache = client is None
 
         if client is not None:
             self.client = client
@@ -36,6 +40,79 @@ class SupabaseVectorStore:
             raise ValueError("SUPABASE_URL and SUPABASE_KEY are required. Set them in your .env file.")
 
         self.client = create_client(supabase_url, supabase_key)
+
+    def _load_cached_hashes(self, repo_id: str) -> dict[str, str]:
+        if not self._use_disk_hash_cache or not _HASH_CACHE_PATH.exists():
+            return {}
+        try:
+            data = json.loads(_HASH_CACHE_PATH.read_text(encoding="utf-8"))
+            entry = data.get(repo_id)
+            return entry if isinstance(entry, dict) else {}
+        except Exception:
+            return {}
+
+    def _save_cached_hashes(self, repo_id: str, file_hashes: dict[str, str]) -> None:
+        if not self._use_disk_hash_cache:
+            return
+        try:
+            data: dict[str, Any] = {}
+            if _HASH_CACHE_PATH.exists():
+                data = json.loads(_HASH_CACHE_PATH.read_text(encoding="utf-8"))
+            data[repo_id] = file_hashes
+            _HASH_CACHE_PATH.write_text(json.dumps(data), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _backfill_hashes_from_active_run(
+        self,
+        repo_id: str,
+        active_run_id: str,
+        chunks: list[CodeChunk],
+        new_hashes: dict[str, str],
+    ) -> dict[str, str]:
+        """Infers unchanged file hashes when an existing run predates the `file_hashes` column."""
+        if not self._use_disk_hash_cache or not active_run_id or not chunks:
+            return {}
+        try:
+            res = (
+                self.client.table("code_chunks")
+                .select("file_path,node_type,start_line,end_line,content")
+                .eq("repo_id", repo_id)
+                .eq("run_id", active_run_id)
+                .neq("node_type", "file_summary")
+                .execute()
+            )
+            existing_rows = list(res.data or [])
+            if not existing_rows:
+                return {}
+
+            db_by_file: dict[str, set[tuple[str, int, int, str]]] = {}
+            for row in existing_rows:
+                fp = str(row.get("file_path") or "")
+                sig = (
+                    str(row.get("node_type") or ""),
+                    int(row.get("start_line") or 0),
+                    int(row.get("end_line") or 0),
+                    str(row.get("content") or ""),
+                )
+                db_by_file.setdefault(fp, set()).add(sig)
+
+            local_by_file: dict[str, set[tuple[str, int, int, str]]] = {}
+            for chunk in chunks:
+                if chunk.node_type == "file_summary":
+                    continue
+                sig = (chunk.node_type, chunk.start_line, chunk.end_line, chunk.content)
+                local_by_file.setdefault(chunk.file_path, set()).add(sig)
+
+            inferred: dict[str, str] = {}
+            for fp, db_sigs in db_by_file.items():
+                if fp in new_hashes and local_by_file.get(fp) == db_sigs:
+                    inferred[fp] = new_hashes[fp]
+                else:
+                    inferred[fp] = "__stale__"
+            return inferred
+        except Exception:
+            return {}
 
     # ---------- repository bookkeeping ----------
 
@@ -64,7 +141,14 @@ class SupabaseVectorStore:
     def get_repository(self, repo_id: str) -> dict[str, Any] | None:
         """Fetches repository metadata including active_run_id and repo_summary."""
         res = self.client.table("repositories").select("*").eq("id", repo_id).execute()
-        return res.data[0] if res.data else None
+        if not res.data:
+            return None
+        row = dict(res.data[0])
+        if not row.get("file_hashes"):
+            cached = self._load_cached_hashes(repo_id)
+            if cached:
+                row["file_hashes"] = cached
+        return row
 
     def _activate_run(
         self,
@@ -74,8 +158,11 @@ class SupabaseVectorStore:
         embed_model: str,
         embedding_dim: int,
         repo_summary: str = "",
+        file_hashes: dict[str, str] | None = None,
     ) -> None:
         """Atomically switches search to the new run (single-row UPDATE)."""
+        if file_hashes is not None:
+            self._save_cached_hashes(repo_id, file_hashes)
         payload: dict[str, Any] = {
             "active_run_id": run_id,
             "chunk_count": chunk_count,
@@ -85,7 +172,23 @@ class SupabaseVectorStore:
         }
         if repo_summary:
             payload["repo_summary"] = repo_summary
-        self.client.table("repositories").update(payload).eq("id", repo_id).execute()
+        if file_hashes is not None:
+            payload["file_hashes"] = file_hashes
+        try:
+            self.client.table("repositories").update(payload).eq("id", repo_id).execute()
+        except Exception as exc:
+            if file_hashes is not None and "file_hashes" in str(exc):
+                fallback = {k: v for k, v in payload.items() if k != "file_hashes"}
+                self.client.table("repositories").update(fallback).eq("id", repo_id).execute()
+            else:
+                raise
+
+    def _delete_files_in_run(self, repo_id: str, run_id: str, file_paths: list[str]) -> None:
+        if not file_paths:
+            return
+        self.client.table("code_chunks").delete().eq("repo_id", repo_id).eq("run_id", run_id).in_(
+            "file_path", file_paths
+        ).execute()
 
     def _delete_stale_runs(self, repo_id: str, keep_run_id: str) -> None:
         self.client.table("code_chunks").delete().eq("repo_id", repo_id).neq("run_id", keep_run_id).execute()
@@ -165,11 +268,100 @@ class SupabaseVectorStore:
         summarizer: RepoSummarizer | None = None,
         llm_summaries: bool = False,
     ) -> str:
-        """Analyzes dependencies, embeds chunks (plus summaries), stores them under a new run, and activates it."""
+        """Analyzes dependencies and indexes chunks; if `files` and prior `file_hashes` exist, re-embeds only changed files."""
         active_embedder = embedder or NvidiaEmbedder()
         repo_id = self.get_or_create_repository(repo_url=repo_url, branch=branch)
-        run_id = str(uuid.uuid4())
+        new_hashes = build_file_manifest(files) if files else None
 
+        existing_repo = self.get_repository(repo_id) if new_hashes else None
+        active_run_id = str((existing_repo or {}).get("active_run_id") or "")
+        old_hashes = (existing_repo or {}).get("file_hashes")
+        if new_hashes and active_run_id and (not isinstance(old_hashes, dict) or not old_hashes):
+            old_hashes = self._backfill_hashes_from_active_run(repo_id, active_run_id, chunks, new_hashes)
+        can_incremental = (
+            bool(new_hashes)
+            and bool(active_run_id)
+            and isinstance(old_hashes, dict)
+            and len(old_hashes) > 0
+            and (existing_repo or {}).get("embed_model") in {None, active_embedder.model}
+            and (existing_repo or {}).get("embedding_dim") in {None, active_embedder.dimensions}
+        )
+
+        if can_incremental and new_hashes is not None and isinstance(old_hashes, dict):
+            deleted_files = [fp for fp in old_hashes if fp not in new_hashes]
+            changed_files = [fp for fp, h in new_hashes.items() if old_hashes.get(fp) != h]
+            unchanged_files = [fp for fp, h in new_hashes.items() if old_hashes.get(fp) == h]
+
+            # Fast path: zero files added, modified, or deleted -> zero embedding calls
+            if not changed_files and not deleted_files:
+                self._save_cached_hashes(repo_id, new_hashes)
+                self.last_sync_stats = {
+                    "changed_files": 0,
+                    "unchanged_files": len(unchanged_files),
+                    "deleted_files": 0,
+                    "embedded_chunks": 0,
+                }
+                return repo_id
+
+            # Partial update path: at least one file is unchanged, so only re-embed changed files
+            if unchanged_files:
+                all_chunks = list(chunks)
+                if all_chunks:
+                    (dependency_analyzer or DependencyAnalyzer()).analyze(all_chunks, files=files)
+
+                repo_summary = ""
+                if include_summaries and all_chunks:
+                    active_summarizer = summarizer or RepoSummarizer()
+                    file_summaries = active_summarizer.build_file_summary_chunks(all_chunks, use_llm=llm_summaries)
+                    all_chunks.extend(file_summaries)
+                    repo_summary = active_summarizer.build_repo_summary(
+                        repo_url=repo_url,
+                        file_summary_chunks=file_summaries,
+                        use_llm=llm_summaries,
+                    )
+
+                changed_set = set(changed_files)
+                chunks_to_embed = [c for c in all_chunks if c.file_path in changed_set]
+
+                embedded_batches: list[list[EmbeddedChunk]] = []
+                if chunks_to_embed:
+                    for batch in active_embedder.iter_embedded_chunks(chunks_to_embed):
+                        for item in batch:
+                            if len(item.embedding) != active_embedder.dimensions:
+                                raise ValueError(
+                                    f"Embedding dimension mismatch: got {len(item.embedding)}, "
+                                    f"expected {active_embedder.dimensions} (check schema vector size)."
+                                )
+                        embedded_batches.append(batch)
+
+                self._delete_files_in_run(repo_id, active_run_id, list(changed_set | set(deleted_files)))
+                embedded_count = 0
+                for batch in embedded_batches:
+                    embedded_count += self.insert_chunks(
+                        repo_id=repo_id,
+                        run_id=active_run_id,
+                        embedded_chunks=batch,
+                    )
+
+                self._activate_run(
+                    repo_id=repo_id,
+                    run_id=active_run_id,
+                    chunk_count=len(all_chunks),
+                    embed_model=active_embedder.model,
+                    embedding_dim=active_embedder.dimensions,
+                    repo_summary=repo_summary,
+                    file_hashes=new_hashes,
+                )
+                self.last_sync_stats = {
+                    "changed_files": len(changed_files),
+                    "unchanged_files": len(unchanged_files),
+                    "deleted_files": len(deleted_files),
+                    "embedded_chunks": embedded_count,
+                }
+                return repo_id
+
+        # Full indexing run (first-time index or full rebuild)
+        run_id = str(uuid.uuid4())
         all_chunks = list(chunks)
         if all_chunks:
             analyzer = dependency_analyzer or DependencyAnalyzer()
@@ -204,7 +396,14 @@ class SupabaseVectorStore:
                 embed_model=active_embedder.model,
                 embedding_dim=active_embedder.dimensions,
                 repo_summary=repo_summary,
+                file_hashes=new_hashes,
             )
+            self.last_sync_stats = {
+                "changed_files": len(new_hashes) if new_hashes else 0,
+                "unchanged_files": 0,
+                "deleted_files": 0,
+                "embedded_chunks": total,
+            }
         except BaseException:
             try:
                 self._delete_run(repo_id, run_id)
@@ -455,17 +654,6 @@ class SupabaseVectorStore:
         rows = rows[:limit]
         rows.reverse()
         return rows, has_more
-        res = (
-            self.client.table("messages")
-            .select("*")
-            .eq("conversation_id", conversation_id)
-            .order("created_at", desc=True)
-            .limit(limit)
-            .execute()
-        )
-        rows = list(res.data or [])
-        rows.reverse()
-        return rows
 
     def save_message(
         self,
