@@ -14,6 +14,7 @@ create table if not exists public.repositories (
     embed_model text,
     embedding_dim integer,
     repo_summary text not null default '',
+    file_hashes jsonb not null default '{}'::jsonb,
     indexed_at timestamptz not null default now()
 );
 
@@ -21,6 +22,8 @@ alter table public.repositories add column if not exists active_run_id uuid;
 alter table public.repositories add column if not exists embed_model text;
 alter table public.repositories add column if not exists embedding_dim integer;
 alter table public.repositories add column if not exists repo_summary text not null default '';
+alter table public.repositories add column if not exists file_hashes jsonb not null default '{}'::jsonb;
+alter table public.repositories add column if not exists owner_id uuid;
 
 -- 3. Code chunks table (AST chunks, file summaries, symbol metadata, dependency graph, FTS tsvector, and 1024-dim vector)
 create table if not exists public.code_chunks (
@@ -95,6 +98,7 @@ create table if not exists public.messages (
 
 create index if not exists idx_messages_conversation_id on public.messages(conversation_id, created_at);
 create index if not exists idx_conversations_repo_updated on public.conversations(repo_id, updated_at desc);
+alter table public.conversations add column if not exists owner_id uuid;
 
 -- 6. Unified Hybrid Search RPC: Reciprocal Rank Fusion (RRF) combining pgvector semantic search
 --    + Postgres full-text keyword search
