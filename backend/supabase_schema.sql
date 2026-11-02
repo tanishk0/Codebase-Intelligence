@@ -67,6 +67,7 @@ create index if not exists idx_code_chunks_repo_run on public.code_chunks(repo_i
 create index if not exists idx_code_chunks_symbol on public.code_chunks(repo_id, symbol_name);
 create index if not exists idx_code_chunks_file_path on public.code_chunks(repo_id, file_path);
 create index if not exists idx_code_chunks_fts on public.code_chunks using gin (fts);
+create index if not exists idx_code_chunks_search_terms on public.code_chunks using gin (search_terms);
 
 create index if not exists idx_code_chunks_embedding_hnsw
     on public.code_chunks
@@ -93,6 +94,7 @@ create table if not exists public.messages (
 );
 
 create index if not exists idx_messages_conversation_id on public.messages(conversation_id, created_at);
+create index if not exists idx_conversations_repo_updated on public.conversations(repo_id, updated_at desc);
 
 -- 6. Unified Hybrid Search RPC: Reciprocal Rank Fusion (RRF) combining pgvector semantic search
 --    + Postgres full-text keyword search
@@ -200,4 +202,93 @@ as $$
 $$;
 
 grant execute on function public.hybrid_search_code_chunks(vector, text, uuid, int, int)
+    to anon, authenticated, service_role;
+
+-- 7. True BM25 hybrid retrieval. Vector and BM25 candidates are fetched independently
+-- by the API and fused there with reciprocal-rank fusion.
+create or replace function public.semantic_search_code_chunks(
+    query_embedding vector(1024),
+    match_repo_id uuid default null,
+    match_count int default 30
+)
+returns table (
+    id bigint, repo_id uuid, file_path text, content text, start_line int, end_line int,
+    node_type text, parent_class text, symbol_name text, imports text[], imported_by text[],
+    calls text[], called_by text[], inherits_from text[], similarity float
+)
+language sql stable
+set search_path = public, extensions
+as $$
+    select cc.id, cc.repo_id, cc.file_path, cc.content, cc.start_line, cc.end_line,
+           cc.node_type, cc.parent_class, cc.symbol_name, cc.imports, cc.imported_by,
+           cc.calls, cc.called_by, cc.inherits_from,
+           (1 - (cc.embedding <=> query_embedding))::float as similarity
+    from public.code_chunks cc
+    join public.repositories r on r.id = cc.repo_id and r.active_run_id = cc.run_id
+    where match_repo_id is null or cc.repo_id = match_repo_id
+    order by cc.embedding <=> query_embedding
+    limit match_count;
+$$;
+
+create or replace function public.bm25_search_code_chunks(
+    query_text text,
+    match_repo_id uuid default null,
+    match_count int default 30
+)
+returns table (
+    id bigint, repo_id uuid, file_path text, content text, start_line int, end_line int,
+    node_type text, parent_class text, symbol_name text, imports text[], imported_by text[],
+    calls text[], called_by text[], inherits_from text[], bm25_score float
+)
+language sql stable
+set search_path = public, extensions
+as $$
+    with query_terms as (
+        select distinct terms.term
+        from unnest(array_remove(regexp_split_to_array(lower(coalesce(query_text, '')), '[^a-z0-9_]+'), '')) as terms(term)
+        where length(terms.term) >= 2
+    ),
+    active_chunks as materialized (
+        select cc.*, cardinality(cc.search_terms) as doc_length
+        from public.code_chunks cc
+        join public.repositories r on r.id = cc.repo_id and r.active_run_id = cc.run_id
+        where match_repo_id is null or cc.repo_id = match_repo_id
+    ),
+    corpus as (
+        select count(*)::float as document_count, greatest(avg(doc_length), 1)::float as average_length
+        from active_chunks
+    ),
+    document_frequency as (
+        select qt.term, count(ac.id)::float as df
+        from query_terms qt
+        left join active_chunks ac on qt.term = any(ac.search_terms)
+        group by qt.term
+    ),
+    scored as (
+        select ac.id,
+               sum(
+                   ln(1 + (corpus.document_count - df.df + 0.5) / (df.df + 0.5))
+                   * ((tf.term_frequency * 2.5) / (tf.term_frequency + 1.5 * (1 - 0.75 + 0.75 * ac.doc_length / corpus.average_length)))
+               )::float as score
+        from active_chunks ac
+        cross join corpus
+        join document_frequency df on df.term = any(ac.search_terms)
+        cross join lateral (
+            select count(*)::float as term_frequency
+            from unnest(ac.search_terms) as terms(term)
+            where terms.term = df.term
+        ) tf
+        group by ac.id
+    )
+    select ac.id, ac.repo_id, ac.file_path, ac.content, ac.start_line, ac.end_line,
+           ac.node_type, ac.parent_class, ac.symbol_name, ac.imports, ac.imported_by,
+           ac.calls, ac.called_by, ac.inherits_from, scored.score as bm25_score
+    from scored
+    join active_chunks ac on ac.id = scored.id
+    order by scored.score desc
+    limit match_count;
+$$;
+
+grant execute on function public.semantic_search_code_chunks(vector, uuid, int),
+    public.bm25_search_code_chunks(text, uuid, int)
     to anon, authenticated, service_role;
