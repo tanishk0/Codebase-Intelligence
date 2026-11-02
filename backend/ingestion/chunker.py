@@ -269,7 +269,30 @@ class TreeSitterChunker:
                             class_name,
                         )
 
+                first_method_start = first_method.start_point[0] + 1 if first_method else None
+
                 for child in (body_node.children if body_node else inner.children):
+                    child_inner = self._unwrap_node(child)[1]
+                    child_start = child.start_point[0] + 1
+                    if (
+                        first_method_start is not None
+                        and child_start >= first_method_start
+                        and child.is_named
+                        and not self._is_callable_node(child_inner, in_class=True)
+                    ):
+                        # Large-class splitting used to mark these lines covered without
+                        # emitting them, losing fields declared between methods.
+                        raw_text = get_node_text(child, code_bytes)
+                        if raw_text.strip():
+                            add_chunk(
+                                f"# File: {file.file_path}\n# Class: {class_name}\n{raw_text}",
+                                child_start,
+                                child.end_point[0] + 1,
+                                "class_member",
+                                class_name,
+                                class_name,
+                            )
+                        continue
                     visit(child, current_class=class_name)
                 return
 
