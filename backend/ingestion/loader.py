@@ -1,14 +1,25 @@
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 from config import settings
 
 
 @dataclass
 class LoadedFile:
-    file_path: str   # Relative path (e.g. "backend/main.py")
-    content: str     # Raw text content of the code file
-    extension: str   # File extension (e.g. ".py")
-    size_bytes: int  # Size in bytes
+    file_path: str          # Relative path (e.g. "backend/main.py")
+    content: str            # Raw text content of the code file
+    extension: str          # File extension (e.g. ".py")
+    size_bytes: int         # Size in bytes
+    content_hash: str = ""  # SHA-256 hex digest of raw file bytes
+
+    def __post_init__(self) -> None:
+        if not self.content_hash and self.content is not None:
+            self.content_hash = hashlib.sha256(self.content.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def build_file_manifest(files: list[LoadedFile]) -> dict[str, str]:
+    """Builds a deterministic {file_path: sha256_hex} manifest for incremental sync diffing."""
+    return {f.file_path: f.content_hash for f in sorted(files, key=lambda x: x.file_path)}
 
 
 def is_text_file(path: Path) -> bool:
@@ -65,9 +76,11 @@ def load_repository_files(repo_root: Path) -> list[LoadedFile]:
         if not is_text_file(path):
             continue
 
-        # 5. Read content and record
+        # 5. Read raw bytes once, compute SHA-256 hash, and decode UTF-8 text
         try:
-            content = path.read_text(encoding="utf-8", errors="ignore")
+            raw_bytes = path.read_bytes()
+            content_hash = hashlib.sha256(raw_bytes).hexdigest()
+            content = raw_bytes.decode("utf-8", errors="ignore")
             relative_path = path.relative_to(repo_root).as_posix()
 
             loaded_files.append(
@@ -76,6 +89,7 @@ def load_repository_files(repo_root: Path) -> list[LoadedFile]:
                     content=content,
                     extension=path.suffix.lower(),
                     size_bytes=size,
+                    content_hash=content_hash,
                 )
             )
         except Exception:
