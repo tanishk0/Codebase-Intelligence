@@ -1,7 +1,7 @@
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 if str(BACKEND_DIR) not in sys.path:
@@ -13,8 +13,8 @@ from ingestion.loader import LoadedFile
 from ingestion.summarizer import RepoSummarizer, build_file_outline
 from ingestion.vector_store import SupabaseVectorStore
 from retrieval.chat_engine import ConversationalRAGEngine
-from retrieval.query_router import QueryPlan, QueryRouter
-from retrieval.reranker import CodeReranker, ContextAssembler
+from retrieval.query_router import QueryPlan, QueryRewriteError, QueryRouter
+from retrieval.reranker import CodeReranker, ContextAssembler, NvidiaCrossEncoderReranker, RerankerServiceError
 from retrieval.retriever import CodebaseRetriever
 
 
@@ -117,8 +117,48 @@ class TestQueryRouter(unittest.TestCase):
         self.assertTrue(plan.needs_retrieval)
         self.assertIn("TreeSitterChunker", plan.standalone_query)
 
+    def test_followup_rewrite_failure_is_reported(self) -> None:
+        mock_llm = MagicMock()
+        mock_llm.complete_json.side_effect = RuntimeError("service unavailable")
+
+        with self.assertRaisesRegex(QueryRewriteError, "AI service is unavailable"):
+            QueryRouter(llm_client=mock_llm).plan(
+                "why does it do that?",
+                history=[{"role": "assistant", "content": "It chunks large classes."}],
+            )
+
 
 class TestRerankerAndContextAssembler(unittest.TestCase):
+    def test_cross_encoder_uses_model_scores_for_final_order(self) -> None:
+        client = MagicMock()
+        client.__enter__.return_value.post.return_value.status_code = 200
+        client.__enter__.return_value.post.return_value.json.return_value = {
+            "rankings": [
+                {"index": 1, "logit": 2.0},
+                {"index": 0, "logit": 0.5},
+            ]
+        }
+        with patch("retrieval.reranker.httpx.Client", return_value=client):
+            ranked = NvidiaCrossEncoderReranker(api_key="key").rerank(
+                "where is the handler?",
+                [
+                    {"id": 1, "file_path": "a.py", "content": "def unrelated(): pass"},
+                    {"id": 2, "file_path": "b.py", "content": "def handler(): pass"},
+                ],
+                top_k=1,
+            )
+        self.assertEqual(ranked[0]["id"], 2)
+        self.assertEqual(ranked[0]["model_rerank_score"], 2.0)
+
+    def test_cross_encoder_failure_does_not_fall_back_to_heuristics(self) -> None:
+        client = MagicMock()
+        client.__enter__.return_value.post.return_value.status_code = 503
+        with patch("retrieval.reranker.httpx.Client", return_value=client):
+            with self.assertRaises(RerankerServiceError):
+                NvidiaCrossEncoderReranker(api_key="key").rerank(
+                    "query", [{"id": 1, "content": "code"}], top_k=1
+                )
+
     def test_reranker_boosts_symbol_and_caps_per_file(self) -> None:
         reranker = CodeReranker(top_k=5, max_chunks_per_file=2)
         plan = QueryPlan(
@@ -192,6 +232,28 @@ class TestRerankerAndContextAssembler(unittest.TestCase):
         self.assertEqual(readme_chunks[0]["end_line"], 6)
         self.assertEqual(readme_chunks[0]["content"].count("line 3"), 1)
 
+    def test_context_assembler_does_not_merge_adjacent_symbols(self) -> None:
+        chunks = [
+            {
+                "file_path": "src/service.py", "start_line": 1, "end_line": 3,
+                "node_type": "method", "parent_class": "Service", "symbol_name": "first",
+                "content": "# File: src/service.py\n# Class: Service\ndef first(self):\n    pass",
+                "rerank_score": 0.9,
+            },
+            {
+                "file_path": "src/service.py", "start_line": 5, "end_line": 6,
+                "node_type": "function", "parent_class": "", "symbol_name": "second",
+                "content": "# File: src/service.py\ndef second():\n    pass",
+                "rerank_score": 0.8,
+            },
+        ]
+        self.assertEqual(len(ContextAssembler.merge_adjacent_chunks(chunks)), 2)
+
+    def test_context_assembler_enforces_budget_for_first_chunk(self) -> None:
+        assembler = ContextAssembler(token_budget=2)
+        chunks = [{"file_path": "src/large.py", "content": "x" * 20, "rerank_score": 1.0}]
+        self.assertEqual(assembler.assemble(chunks), [])
+
 
 class TestConversationalRAGFlow(unittest.TestCase):
     def test_multi_turn_rag_carries_over_previous_chunks_and_rewrites_followup(self) -> None:
@@ -240,11 +302,14 @@ class TestConversationalRAGFlow(unittest.TestCase):
         mock_llm.complete.return_value = (
             "It unwraps `decorated_definition` in `[ingestion/chunker.py:L150-L192]`."
         )
+        mock_model_reranker = MagicMock()
+        mock_model_reranker.rerank.side_effect = lambda _query, chunks, top_k: chunks[:top_k]
 
         retriever = CodebaseRetriever(
             vector_store=mock_store,
             embedder=mock_embedder,
             llm_client=mock_llm,
+            model_reranker=mock_model_reranker,
         )
         engine = ConversationalRAGEngine(retriever=retriever, llm_client=mock_llm, vector_store=mock_store)
 
