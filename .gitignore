@@ -34,3 +34,4 @@ htmlcov/
 *.log
 scratch/
 tmp/
+.repo_file_hashes.json
