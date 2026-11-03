@@ -20,7 +20,7 @@ def strip_thinking(text: str) -> str:
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
-    """Extracts and parses a JSON object from an LLM response (handling markdown code fences)."""
+    """Extracts and parses a JSON object from an LLM response (handling markdown code fences and chain-of-thought)."""
     cleaned = strip_thinking(text)
     fence_match = _JSON_FENCE_RE.search(cleaned)
     candidate = fence_match.group(1) if fence_match else cleaned
@@ -30,7 +30,16 @@ def extract_json_object(text: str) -> dict[str, Any]:
     if start != -1 and end != -1 and end > start:
         candidate = candidate[start : end + 1]
 
-    return json.loads(candidate)
+    try:
+        return json.loads(candidate)
+    except Exception:
+        match = re.search(r"\{[^{}]*\"(?:standalone_query|needs_retrieval)\"[^{}]*\}", cleaned, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except Exception:
+                pass
+        raise
 
 
 class NvidiaChatClient:
