@@ -35,6 +35,13 @@ _CAMEL_BOUNDARY_1 = re.compile(r"([a-z0-9])([A-Z])")
 _CAMEL_BOUNDARY_2 = re.compile(r"([A-Z]+)([A-Z][a-z])")
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}")
 
+# Bump these when the chunker's output or the injected headers change. They feed the
+# index pipeline fingerprint, so a bump forces a rebuild instead of silently serving
+# chunks produced by the previous implementation.
+CHUNKER_VERSION = 2
+SEARCH_TEXT_VERSION = 1
+HEADER_FORMAT_VERSION = 1
+
 SYNTHETIC_HEADER_PREFIXES = (
     "# File:",
     "# Class:",
@@ -122,6 +129,15 @@ class TreeSitterChunker:
         self.max_function_lines = max_function_lines
         self.fallback_chunk_lines = fallback_chunk_lines
         self.fallback_overlap_lines = fallback_overlap_lines
+
+    def pipeline_params(self) -> dict[str, int]:
+        """Returns the parameters that change the produced chunk set (for index invalidation)."""
+        return {
+            "max_class_lines": self.max_class_lines,
+            "max_function_lines": self.max_function_lines,
+            "fallback_chunk_lines": self.fallback_chunk_lines,
+            "fallback_overlap_lines": self.fallback_overlap_lines,
+        }
 
     @staticmethod
     def _unwrap_node(node):
