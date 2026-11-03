@@ -15,6 +15,17 @@ _NO_RETRIEVAL_PATTERNS = re.compile(
     r"translate that|give me a shorter version|make it concise|eli5)\b",
     re.IGNORECASE,
 )
+_CHITCHAT_PATTERNS = re.compile(
+    r"^(?:"
+    r"(?:hi|hello|hey|greetings|howdy|sup|yo|good\s+(?:morning|afternoon|evening|day))|"
+    r"(?:thanks|thank\s+you|thx|ty|cheers)|"
+    r"(?:ok|okay|k|cool|great|awesome|perfect|nice|sounds\s+good|got\s+it|understood|all\s+good)|"
+    r"(?:ok\s+(?:thanks|thank\s+you|got\s+it|cool|great))|"
+    r"(?:who\s+are\s+you|what\s+(?:can\s+you\s+do|are\s+you)|help(?:\s+me)?)|"
+    r"(?:bye|goodbye|see\s+ya)"
+    r")[!.,? ]*$",
+    re.IGNORECASE,
+)
 _FOLLOWUP_REFERENCE_RE = re.compile(
     r"\b(it|its|that|this|those|these|they|them|the above|previous|last|other method|same class|same file)\b"
     r"|^(?:why|what about|how about|and |also |where does|when does)\b",
@@ -72,7 +83,17 @@ class QueryRouter:
             raise ValueError("User message cannot be empty.")
 
         has_history = bool(history)
-        # 1. Pure formatting/meta follow-up on previous assistant answer -> skip retrieval
+        target_file, target_symbol = extract_query_hints(clean_msg)
+
+        # 1. Greetings, pleasantries, acknowledgments, and meta-queries -> skip retrieval
+        if not target_file and not target_symbol and _CHITCHAT_PATTERNS.match(clean_msg):
+            return QueryPlan(
+                original_query=clean_msg,
+                standalone_query=clean_msg,
+                needs_retrieval=False,
+            )
+
+        # 2. Pure formatting/meta follow-up on previous assistant answer -> skip retrieval
         if has_history and _NO_RETRIEVAL_PATTERNS.search(clean_msg):
             return QueryPlan(
                 original_query=clean_msg,
@@ -81,26 +102,26 @@ class QueryRouter:
             )
 
         standalone = clean_msg
+        needs_retrieval = True
 
-        # 2. If there is conversation history and the message looks like a follow-up, condense it
+        # 3. If there is conversation history and the message looks like a follow-up, condense it
         if has_history and self._needs_condensing(clean_msg):
             standalone, needs_retrieval = self._condense_with_history(
                 clean_msg, history or [], rolling_summary
             )
-            if not needs_retrieval:
-                return QueryPlan(
-                    original_query=clean_msg,
-                    standalone_query=standalone,
-                    needs_retrieval=False,
-                )
 
-        # 3. Extract optional symbol/file hints (used only as soft reranking signals; all queries run hybrid search)
-        target_file, target_symbol = extract_query_hints(standalone)
+        # 4. Extract optional symbol/file hints (used as soft reranking signals)
+        if not target_file and not target_symbol:
+            target_file, target_symbol = extract_query_hints(standalone)
+
+        # Safety override: if the query explicitly targets a file or symbol, always retrieve code
+        if target_file or target_symbol:
+            needs_retrieval = True
 
         return QueryPlan(
             original_query=clean_msg,
             standalone_query=standalone,
-            needs_retrieval=True,
+            needs_retrieval=needs_retrieval,
             target_symbol=target_symbol,
             target_file=target_file,
         )
@@ -133,8 +154,9 @@ class QueryRouter:
                     "You rewrite follow-up questions in a codebase Q&A chat into a standalone search query.\n"
                     "- Resolve pronouns ('it', 'that', 'this method', 'the class') using the conversation history.\n"
                     "- Preserve exact function names, class names, and file paths.\n"
+                    "- Do NOT return placeholders, empty strings, or ellipses like '...'. Write the actual complete search query.\n"
                     "- Set \"needs_retrieval\": false ONLY if the user is just asking to reformat/shorten the previous answer.\n"
-                    "Return ONLY JSON: {\"needs_retrieval\": true, \"standalone_query\": \"...\"}"
+                    "Return ONLY JSON: {\"needs_retrieval\": true, \"standalone_query\": \"actual search question\"}"
                 ),
             },
             {
@@ -145,8 +167,19 @@ class QueryRouter:
         try:
             data = self.llm.complete_json(messages, use_fast_model=True, max_tokens=200)
             needs_retrieval = bool(data.get("needs_retrieval", True))
-            rewritten = str(data.get("standalone_query") or user_message).strip()
-            return (rewritten or user_message), needs_retrieval
+            raw_rewritten = str(data.get("standalone_query") or "").strip()
+            if not raw_rewritten or raw_rewritten.strip(". ") == "" or raw_rewritten.lower() in {"...", "none", "null"}:
+                rewritten = user_message
+            else:
+                rewritten = raw_rewritten
+
+            user_file, user_sym = extract_query_hints(user_message)
+            if user_file and user_file.lower() not in rewritten.lower():
+                rewritten = f"{rewritten} {user_file}"
+            if user_sym and user_sym.lower() not in rewritten.lower():
+                rewritten = f"{rewritten} {user_sym}"
+
+            return rewritten.strip(), needs_retrieval
         except Exception as exc:
             raise QueryRewriteError(
                 "I couldn't resolve this follow-up because the AI service is unavailable. "
