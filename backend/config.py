@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     # Embedding & LLM configuration (NVIDIA NIM)
     NVIDIA_BASE_URL: str = "https://integrate.api.nvidia.com/v1"
-    NVIDIA_EMBED_MODEL: str = "nvidia/nemotron-3.5-embed-1b"
+    NVIDIA_EMBED_MODEL: str = "nvidia/llama-nemotron-embed-vl-1b-v2"
     NVIDIA_CHAT_MODEL: str = "nvidia/nemotron-3-ultra-550b-a55b"
     NVIDIA_FAST_MODEL: str = "nvidia/nemotron-3-ultra-550b-a55b"
     NVIDIA_RERANK_MODEL: str = "nvidia/llama-nemotron-rerank-vl-1b-v2"
