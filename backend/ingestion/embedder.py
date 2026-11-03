@@ -129,7 +129,7 @@ class NvidiaEmbedder:
         }
         safe_texts = [t if (isinstance(t, str) and t.strip()) else "# empty" for t in texts]
         payload = {
-            "input": texts,
+            "input": safe_texts,
             "model": self.model,
             "input_type": input_type,
             "dimensions": self.dimensions,
