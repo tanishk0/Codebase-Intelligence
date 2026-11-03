@@ -127,6 +127,7 @@ class NvidiaEmbedder:
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+        safe_texts = [t if (isinstance(t, str) and t.strip()) else "# empty" for t in texts]
         payload = {
             "input": texts,
             "model": self.model,
