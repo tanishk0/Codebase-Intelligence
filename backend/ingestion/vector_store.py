@@ -316,6 +316,46 @@ class SupabaseVectorStore:
                     raise
         return copied
 
+    def _fallback_copy_chunks(
+        self,
+        repo_id: str,
+        source_run_id: str,
+        target_run_id: str,
+        file_paths: list[str],
+    ) -> int:
+        """Client-side fallback chunk copy when the SQL RPC copy_chunks_to_run is not installed."""
+        total_copied = 0
+        cols = (
+            "file_path, content, start_line, end_line, node_type, "
+            "parent_class, symbol_name, imports, imported_by, calls, "
+            "called_by, inherits_from, search_text, search_terms, embedding"
+        )
+        chunk_batch_size = 50
+        for i in range(0, len(file_paths), chunk_batch_size):
+            sub_paths = file_paths[i : i + chunk_batch_size]
+            res = (
+                self.client.table("code_chunks")
+                .select(cols)
+                .eq("repo_id", repo_id)
+                .eq("run_id", source_run_id)
+                .in_("file_path", sub_paths)
+                .execute()
+            )
+            rows = res.data or []
+            if not rows:
+                continue
+            to_insert = []
+            for row in rows:
+                row_copy = dict(row)
+                row_copy["repo_id"] = repo_id
+                row_copy["run_id"] = target_run_id
+                to_insert.append(row_copy)
+            for j in range(0, len(to_insert), self.batch_size):
+                insert_batch = to_insert[j : j + self.batch_size]
+                self.client.table("code_chunks").insert(insert_batch).execute()
+            total_copied += len(rows)
+        return total_copied
+
     @staticmethod
     def _rpc_count(data: Any) -> int:
         """Reads a scalar count from an RPC response across PostgREST return shapes."""
