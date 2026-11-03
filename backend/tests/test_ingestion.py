@@ -8,11 +8,15 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from ingestion.git_clone import validate_github_url
+from ingestion.git_clone import RepoCloner, validate_github_url
 from ingestion.loader import is_safe_path, load_repository_files
 
 
 class TestIngestionHelpers(unittest.TestCase):
+    def test_repo_cloner_normalizes_default_branch_to_none(self) -> None:
+        self.assertIsNone(RepoCloner("https://github.com/psf/requests", branch="default").branch)
+        self.assertIsNone(RepoCloner("https://github.com/psf/requests", branch="").branch)
+        self.assertEqual(RepoCloner("https://github.com/psf/requests", branch="dev").branch, "dev")
     def test_validate_github_url_accepts_valid_https(self) -> None:
         validate_github_url("https://github.com/psf/requests")
         validate_github_url("https://www.github.com/tiangolo/fastapi")
