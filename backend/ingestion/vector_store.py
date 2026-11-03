@@ -1,12 +1,21 @@
 from datetime import datetime, timezone
+import hashlib
 import json
 import re
 from typing import Any
 import uuid
 from supabase import Client, create_client
 from config import BACKEND_DIR, settings
-from ingestion.chunker import CodeChunk, build_search_text, split_identifier_tokens
-from ingestion.dependency import DependencyAnalyzer
+from ingestion.chunker import (
+    CHUNKER_VERSION,
+    HEADER_FORMAT_VERSION,
+    SEARCH_TEXT_VERSION,
+    CodeChunk,
+    TreeSitterChunker,
+    build_search_text,
+    split_identifier_tokens,
+)
+from ingestion.dependency import DEPENDENCY_VERSION, DependencyAnalyzer
 from ingestion.embedder import EmbeddedChunk, NvidiaEmbedder
 from ingestion.loader import LoadedFile, build_file_manifest
 from ingestion.summarizer import RepoSummarizer
@@ -150,6 +159,59 @@ class SupabaseVectorStore:
                 row["file_hashes"] = cached
         return row
 
+    @staticmethod
+    def pipeline_version(embed_model: str, embedding_dim: int) -> str:
+        """Fingerprints everything that shapes a stored chunk and its embedding.
+
+        File hashes alone cannot detect a chunker, header-format, or embedding-model change,
+        so those edits used to leave the index silently stale. Storing this alongside the
+        manifest gates incremental sync on "same pipeline".
+        """
+        payload = {
+            "chunker_version": CHUNKER_VERSION,
+            "chunker_params": TreeSitterChunker().pipeline_params(),
+            "dependency_version": DEPENDENCY_VERSION,
+            "search_text_version": SEARCH_TEXT_VERSION,
+            "header_format_version": HEADER_FORMAT_VERSION,
+            "embed_model": embed_model,
+            "embedding_dim": embedding_dim,
+        }
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+    @staticmethod
+    def _file_edge_signatures(chunks: list[CodeChunk]) -> dict[str, str]:
+        """Per-file fingerprint of derived dependency metadata.
+
+        A file's imports/callers come from parsing *every* file, so it can go stale with
+        unchanged bytes of its own (another file renames a symbol it calls). Comparing these
+        signatures is how an incremental run notices that kind of invalidation.
+        """
+        edges: dict[str, dict[str, set[str]]] = {}
+        for chunk in chunks:
+            entry = edges.setdefault(
+                chunk.file_path,
+                {
+                    "imports": set(),
+                    "imported_by": set(),
+                    "calls": set(),
+                    "called_by": set(),
+                    "inherits_from": set(),
+                },
+            )
+            entry["imports"].update(chunk.imports)
+            entry["imported_by"].update(chunk.imported_by)
+            entry["calls"].update(chunk.calls)
+            entry["called_by"].update(chunk.called_by)
+            entry["inherits_from"].update(chunk.inherits_from)
+
+        return {
+            file_path: hashlib.sha256(
+                json.dumps({key: sorted(values) for key, values in entry.items()}, sort_keys=True).encode("utf-8")
+            ).hexdigest()[:16]
+            for file_path, entry in edges.items()
+            if entry["imports"] or entry["imported_by"] or entry["calls"] or entry["called_by"] or entry["inherits_from"]
+        }
+
     def _activate_run(
         self,
         repo_id: str,
@@ -159,10 +221,19 @@ class SupabaseVectorStore:
         embedding_dim: int,
         repo_summary: str = "",
         file_hashes: dict[str, str] | None = None,
-    ) -> None:
-        """Atomically switches search to the new run (single-row UPDATE)."""
+        pipeline_version: str = "",
+        file_edges: dict[str, str] | None = None,
+        expected_run_id: str | None = None,
+    ) -> bool:
+        """Points the repository at `run_id` with a single-row UPDATE.
+
+        Passing `expected_run_id` makes it a compare-and-swap: the update only applies if the
+        repository still points at the run this job diffed against. A slow job can therefore
+        never publish an index built on stale input over a newer one.
+        """
         if file_hashes is not None:
             self._save_cached_hashes(repo_id, file_hashes)
+
         payload: dict[str, Any] = {
             "active_run_id": run_id,
             "chunk_count": chunk_count,
@@ -174,21 +245,89 @@ class SupabaseVectorStore:
             payload["repo_summary"] = repo_summary
         if file_hashes is not None:
             payload["file_hashes"] = file_hashes
-        try:
-            self.client.table("repositories").update(payload).eq("id", repo_id).execute()
-        except Exception as exc:
-            if file_hashes is not None and "file_hashes" in str(exc):
-                fallback = {k: v for k, v in payload.items() if k != "file_hashes"}
-                self.client.table("repositories").update(fallback).eq("id", repo_id).execute()
-            else:
-                raise
+        if pipeline_version:
+            payload["pipeline_version"] = pipeline_version
+        if file_edges is not None:
+            payload["file_edges"] = file_edges
 
-    def _delete_files_in_run(self, repo_id: str, run_id: str, file_paths: list[str]) -> None:
-        if not file_paths:
-            return
-        self.client.table("code_chunks").delete().eq("repo_id", repo_id).eq("run_id", run_id).in_(
-            "file_path", file_paths
-        ).execute()
+        res = self._update_repository(repo_id, payload, expected_run_id)
+        if expected_run_id is not None:
+            return bool(res.data)
+        return True
+
+    def _update_repository(
+        self,
+        repo_id: str,
+        payload: dict[str, Any],
+        expected_run_id: str | None = None,
+    ):
+        """Runs the repository update, tolerating schemas that predate the metadata columns."""
+        optional = {"file_hashes", "pipeline_version", "file_edges"}
+
+        def _apply(body: dict[str, Any]):
+            query = self.client.table("repositories").update(body).eq("id", repo_id)
+            if expected_run_id is not None:
+                query = query.eq("active_run_id", expected_run_id)
+            return query.execute()
+
+        try:
+            return _apply(payload)
+        except Exception as exc:
+            if optional & set(payload) and any(col in str(exc) for col in optional):
+                return _apply({key: value for key, value in payload.items() if key not in optional})
+            raise
+
+    def copy_chunks_to_run(
+        self,
+        repo_id: str,
+        source_run_id: str,
+        target_run_id: str,
+        file_paths: list[str],
+        batch_size: int = 500,
+    ) -> int:
+        """Copies unchanged files' chunks (embeddings included) into the staging run, in SQL.
+
+        This is what makes the incremental path both atomic and cheap: no API calls, no row of
+        the live run touched, and the single `active_run_id` update is the only visible change.
+        """
+        paths = [path for path in dict.fromkeys(file_paths) if path]
+        if not paths:
+            return 0
+
+        copied = 0
+        for start in range(0, len(paths), batch_size):
+            batch = paths[start : start + batch_size]
+            res = self.client.rpc(
+                "copy_chunks_to_run",
+                {
+                    "p_repo_id": repo_id,
+                    "p_source_run": source_run_id,
+                    "p_target_run": target_run_id,
+                    "p_file_paths": batch,
+                },
+            ).execute()
+            copied += self._rpc_count(res.data)
+        return copied
+
+    @staticmethod
+    def _rpc_count(data: Any) -> int:
+        """Reads a scalar count from an RPC response across PostgREST return shapes."""
+        if data is None or isinstance(data, bool):
+            return 0
+        if isinstance(data, (int, float)):
+            return int(data)
+        if isinstance(data, str):
+            try:
+                return int(data)
+            except ValueError:
+                return 0
+        if isinstance(data, list) and data:
+            first = data[0]
+            if isinstance(first, (int, float)):
+                return int(first)
+            if isinstance(first, dict):
+                return int(first.get("copy_chunks_to_run") or first.get("count") or 0)
+        return 0
 
     def _delete_stale_runs(self, repo_id: str, keep_run_id: str) -> None:
         self.client.table("code_chunks").delete().eq("repo_id", repo_id).neq("run_id", keep_run_id).execute()
@@ -272,12 +411,17 @@ class SupabaseVectorStore:
         active_embedder = embedder or NvidiaEmbedder()
         repo_id = self.get_or_create_repository(repo_url=repo_url, branch=branch)
         new_hashes = build_file_manifest(files) if files else None
+        pipeline_version = self.pipeline_version(active_embedder.model, active_embedder.dimensions)
 
         existing_repo = self.get_repository(repo_id) if new_hashes else None
         active_run_id = str((existing_repo or {}).get("active_run_id") or "")
         old_hashes = (existing_repo or {}).get("file_hashes")
         if new_hashes and active_run_id and (not isinstance(old_hashes, dict) or not old_hashes):
             old_hashes = self._backfill_hashes_from_active_run(repo_id, active_run_id, chunks, new_hashes)
+
+        # Incremental reuse is only valid if the existing rows were produced by the same chunker,
+        # header format, dependency extractor, and embedding model. Without this check, editing
+        # any of those left every file hash unchanged and the index silently stale.
         can_incremental = (
             bool(new_hashes)
             and bool(active_run_id)
@@ -285,6 +429,7 @@ class SupabaseVectorStore:
             and len(old_hashes) > 0
             and (existing_repo or {}).get("embed_model") in {None, active_embedder.model}
             and (existing_repo or {}).get("embedding_dim") in {None, active_embedder.dimensions}
+            and (existing_repo or {}).get("pipeline_version") in {None, pipeline_version}
         )
 
         if can_incremental and new_hashes is not None and isinstance(old_hashes, dict):
@@ -296,6 +441,7 @@ class SupabaseVectorStore:
             if not changed_files and not deleted_files:
                 self._save_cached_hashes(repo_id, new_hashes)
                 self.last_sync_stats = {
+                    "mode": "noop",
                     "changed_files": 0,
                     "unchanged_files": len(unchanged_files),
                     "deleted_files": 0,
@@ -306,8 +452,24 @@ class SupabaseVectorStore:
             # Partial update path: at least one file is unchanged, so only re-embed changed files
             if unchanged_files:
                 all_chunks = list(chunks)
+                analyzer = dependency_analyzer or DependencyAnalyzer()
                 if all_chunks:
-                    (dependency_analyzer or DependencyAnalyzer()).analyze(all_chunks, files=files)
+                    analyzer.analyze(all_chunks, files=files)
+
+                # Imports and callers are derived by parsing every file, so a rename in one file
+                # invalidates metadata of files whose own bytes did not change. Signature
+                # comparison turns that silently-stale case into a re-chunk of the affected files.
+                edge_signatures = self._file_edge_signatures(all_chunks)
+                stored_edges = (existing_repo or {}).get("file_edges")
+                stored_edges = stored_edges if isinstance(stored_edges, dict) else {}
+                edge_changed = [
+                    fp
+                    for fp in unchanged_files
+                    if stored_edges.get(fp) and stored_edges.get(fp) != edge_signatures.get(fp)
+                ]
+
+                changed_set = set(changed_files) | set(edge_changed)
+                copy_set = [fp for fp in unchanged_files if fp not in changed_set]
 
                 repo_summary = ""
                 if include_summaries and all_chunks:
@@ -320,9 +482,10 @@ class SupabaseVectorStore:
                         use_llm=llm_summaries,
                     )
 
-                changed_set = set(changed_files)
                 chunks_to_embed = [c for c in all_chunks if c.file_path in changed_set]
 
+                # Embed before writing anything. The staging run stays invisible until the swap,
+                # so a failure here costs API calls but can never degrade the live index.
                 embedded_batches: list[list[EmbeddedChunk]] = []
                 if chunks_to_embed:
                     for batch in active_embedder.iter_embedded_chunks(chunks_to_embed):
@@ -334,28 +497,57 @@ class SupabaseVectorStore:
                                 )
                         embedded_batches.append(batch)
 
-                self._delete_files_in_run(repo_id, active_run_id, list(changed_set | set(deleted_files)))
+                target_run_id = str(uuid.uuid4())
+                copied = 0
                 embedded_count = 0
-                for batch in embedded_batches:
-                    embedded_count += self.insert_chunks(
-                        repo_id=repo_id,
-                        run_id=active_run_id,
-                        embedded_chunks=batch,
-                    )
+                try:
+                    # Unchanged files carry their embeddings forward inside Postgres: no API
+                    # calls, and no row of the live run is modified.
+                    copied = self.copy_chunks_to_run(repo_id, active_run_id, target_run_id, copy_set)
+                    for batch in embedded_batches:
+                        embedded_count += self.insert_chunks(
+                            repo_id=repo_id,
+                            run_id=target_run_id,
+                            embedded_chunks=batch,
+                        )
 
-                self._activate_run(
-                    repo_id=repo_id,
-                    run_id=active_run_id,
-                    chunk_count=len(all_chunks),
-                    embed_model=active_embedder.model,
-                    embedding_dim=active_embedder.dimensions,
-                    repo_summary=repo_summary,
-                    file_hashes=new_hashes,
-                )
+                    activated = self._activate_run(
+                        repo_id=repo_id,
+                        run_id=target_run_id,
+                        chunk_count=copied + embedded_count,
+                        embed_model=active_embedder.model,
+                        embedding_dim=active_embedder.dimensions,
+                        repo_summary=repo_summary,
+                        file_hashes=new_hashes,
+                        pipeline_version=pipeline_version,
+                        file_edges=edge_signatures,
+                        expected_run_id=active_run_id,
+                    )
+                    if not activated:
+                        raise RuntimeError(
+                            "The active index changed while this sync was running; discarding this "
+                            "result instead of overwriting a newer run."
+                        )
+                except BaseException:
+                    # Discard the staging run; the live index is still the previous run.
+                    try:
+                        self._delete_run(repo_id, target_run_id)
+                    except Exception:
+                        pass
+                    raise
+
+                try:
+                    self._delete_stale_runs(repo_id, keep_run_id=target_run_id)
+                except Exception:
+                    pass
+
                 self.last_sync_stats = {
+                    "mode": "incremental",
                     "changed_files": len(changed_files),
+                    "edge_invalidated_files": len(edge_changed),
                     "unchanged_files": len(unchanged_files),
                     "deleted_files": len(deleted_files),
+                    "copied_chunks": copied,
                     "embedded_chunks": embedded_count,
                 }
                 return repo_id
@@ -363,9 +555,11 @@ class SupabaseVectorStore:
         # Full indexing run (first-time index or full rebuild)
         run_id = str(uuid.uuid4())
         all_chunks = list(chunks)
+        file_edges: dict[str, str] = {}
         if all_chunks:
             analyzer = dependency_analyzer or DependencyAnalyzer()
             analyzer.analyze(all_chunks, files=files)
+            file_edges = self._file_edge_signatures(all_chunks)
 
         repo_summary = ""
         if include_summaries and all_chunks:
@@ -397,8 +591,11 @@ class SupabaseVectorStore:
                 embedding_dim=active_embedder.dimensions,
                 repo_summary=repo_summary,
                 file_hashes=new_hashes,
+                pipeline_version=pipeline_version,
+                file_edges=file_edges,
             )
             self.last_sync_stats = {
+                "mode": "full",
                 "changed_files": len(new_hashes) if new_hashes else 0,
                 "unchanged_files": 0,
                 "deleted_files": 0,
@@ -440,8 +637,31 @@ class SupabaseVectorStore:
             "match_repo_id": repo_id,
             "match_count": match_count,
         }
-        vector_rows = list(self.client.rpc("semantic_search_code_chunks", vector_params).execute().data or [])
-        bm25_rows = list(self.client.rpc("bm25_search_code_chunks", bm25_params).execute().data or [])
+        vector_rows: list[dict[str, Any]] = []
+        try:
+            vector_rows = list(self.client.rpc("semantic_search_code_chunks", vector_params).execute().data or [])
+        except Exception:
+            vector_rows = []
+
+        bm25_rows: list[dict[str, Any]] = []
+        try:
+            bm25_rows = list(self.client.rpc("bm25_search_code_chunks", bm25_params).execute().data or [])
+        except Exception:
+            bm25_rows = []
+
+        if not vector_rows and not bm25_rows:
+            try:
+                legacy_params = {
+                    "query_embedding": query_embedding,
+                    "query_text": expanded_query_text,
+                    "match_repo_id": repo_id,
+                    "match_count": match_count,
+                    "rrf_k": rrf_k,
+                }
+                fallback_rows = list(self.client.rpc("hybrid_search_code_chunks", legacy_params).execute().data or [])
+                return fallback_rows[:match_count]
+            except Exception:
+                pass
 
         fused: dict[int, dict[str, Any]] = {}
         for rank, row in enumerate(vector_rows, start=1):
