@@ -51,7 +51,10 @@ def load_repository_files(repo_root: Path) -> list[LoadedFile]:
     loaded_files: list[LoadedFile] = []
     resolved_root = repo_root.resolve()
 
-    for path in repo_root.rglob("*"):
+    # Sorted so that hitting MAX_TOTAL_FILES selects the same subset on every run. With raw
+    # rglob order (filesystem-dependent) a repo above the cap produced different manifests
+    # each sync, which looked like a mass rename and re-embedded the whole index.
+    for path in sorted(repo_root.rglob("*")):
         # 0. Security: skip symlinks and paths escaping the repo root
         if not is_safe_path(path, resolved_root):
             continue
