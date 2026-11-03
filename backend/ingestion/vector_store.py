@@ -297,16 +297,23 @@ class SupabaseVectorStore:
         copied = 0
         for start in range(0, len(paths), batch_size):
             batch = paths[start : start + batch_size]
-            res = self.client.rpc(
-                "copy_chunks_to_run",
-                {
-                    "p_repo_id": repo_id,
-                    "p_source_run": source_run_id,
-                    "p_target_run": target_run_id,
-                    "p_file_paths": batch,
-                },
-            ).execute()
-            copied += self._rpc_count(res.data)
+            try:
+                res = self.client.rpc(
+                    "copy_chunks_to_run",
+                    {
+                        "p_repo_id": repo_id,
+                        "p_source_run": source_run_id,
+                        "p_target_run": target_run_id,
+                        "p_file_paths": batch,
+                    },
+                ).execute()
+                copied += self._rpc_count(res.data)
+            except Exception as rpc_err:
+                err_str = str(rpc_err)
+                if "copy_chunks_to_run" in err_str or "PGRST202" in err_str:
+                    copied += self._fallback_copy_chunks(repo_id, source_run_id, target_run_id, batch)
+                else:
+                    raise
         return copied
 
     @staticmethod
