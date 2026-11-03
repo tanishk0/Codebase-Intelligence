@@ -102,6 +102,17 @@ class TestQueryRouter(unittest.TestCase):
         p_meta = router.plan("summarize that in bullet points", history=[{"role": "assistant", "content": "..."}])
         self.assertFalse(p_meta.needs_retrieval)
 
+    def test_greetings_and_chitchat_skip_retrieval(self) -> None:
+        router = QueryRouter()
+        for phrase in ("hi", "hello!", "hey", "good morning", "thanks", "thank you!", "ok got it", "who are you"):
+            plan = router.plan(phrase)
+            self.assertFalse(plan.needs_retrieval, f"Expected {phrase} to skip retrieval")
+
+        # But a greeting combined with a file or question must retrieve
+        code_plan = router.plan("hi what is chunker.py")
+        self.assertTrue(code_plan.needs_retrieval)
+        self.assertEqual(code_plan.target_file, "chunker.py")
+
     def test_condenses_followup_with_llm(self) -> None:
         mock_llm = MagicMock()
         mock_llm.complete_json.return_value = {
