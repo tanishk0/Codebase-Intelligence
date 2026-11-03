@@ -44,6 +44,22 @@ class RateLimiter:
         self._next_allowed = now + self.min_interval
 
 
+_SHARED_LIMITERS: dict[str, RateLimiter] = {}
+
+
+def shared_rate_limiter(name: str, requests_per_minute: int) -> RateLimiter:
+    """Returns a process-wide limiter per provider.
+
+    Each embedding client used to build its own limiter, so two concurrent indexing jobs
+    shared the provider quota on paper but consumed 2x the RPM in practice and hit 429s.
+    """
+    limiter = _SHARED_LIMITERS.get(name)
+    if limiter is None:
+        limiter = RateLimiter(requests_per_minute)
+        _SHARED_LIMITERS[name] = limiter
+    return limiter
+
+
 def parse_retry_after(value: str | None) -> float | None:
     """Parse a Retry-After header, which may be delta-seconds or an HTTP date."""
     if not value:
