@@ -112,6 +112,7 @@ class NvidiaCrossEncoderReranker:
                 continue
             seen.add(index)
             item = dict(candidates[index])
+            item["rerank_score"] = score
             item["model_rerank_score"] = score
             ranked.append(item)
             if len(ranked) >= top_k:
