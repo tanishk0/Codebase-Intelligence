@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     NVIDIA_RERANK_MODEL: str = "nvidia/llama-nemotron-rerank-vl-1b-v2"
     NVIDIA_RERANK_URL: str = "https://ai.api.nvidia.com/v1/retrieval/nvidia/llama-nemotron-rerank-vl-1b-v2/reranking"
     EMBEDDING_DIMENSIONS: int = 1024
-    EMBED_BATCH_SIZE: int = 50
+    EMBED_BATCH_SIZE: int = 32
     NVIDIA_REQUESTS_PER_MINUTE: int = 35  # Free tier is ~40 RPM; keep headroom
     SUPABASE_BATCH_SIZE: int = 100
 
