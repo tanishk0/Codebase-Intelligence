@@ -5,6 +5,9 @@ from tree_sitter import Parser
 from ingestion.chunker import JS_TS_PARSERS, CodeChunk, get_node_text, py_parser
 from ingestion.loader import LoadedFile
 
+# Bump when import/call/inheritance extraction changes, so stored edge metadata is rebuilt.
+DEPENDENCY_VERSION = 1
+
 CODE_EXTENSIONS = (".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts")
 BARREL_FILES = ("__init__.py", "index.ts", "index.tsx", "index.js", "index.jsx")
 IGNORED_CALL_NAMES = {
