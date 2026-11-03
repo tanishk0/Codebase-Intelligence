@@ -296,3 +296,110 @@ $$;
 grant execute on function public.semantic_search_code_chunks(vector, uuid, int),
     public.bm25_search_code_chunks(text, uuid, int)
     to anon, authenticated, service_role;
+
+-- 7. Background index jobs: durable, pollable, lease-claimed work queue.
+create table if not exists public.index_jobs (
+    id uuid primary key default gen_random_uuid(),
+    repo_id uuid not null references public.repositories(id) on delete cascade,
+    kind text not null default 'incremental' check (kind in ('full', 'incremental')),
+    status text not null default 'queued' check (status in ('queued', 'running', 'succeeded', 'failed')),
+    repo_url text not null default '',
+    branch text not null default 'main',
+    llm_summaries boolean not null default false,
+    base_run_id uuid,
+    target_run_id uuid,
+    stats jsonb not null default '{}'::jsonb,
+    error text not null default '',
+    attempt integer not null default 0,
+    worker_id text not null default '',
+    requested_at timestamptz not null default now(),
+    started_at timestamptz,
+    finished_at timestamptz,
+    heartbeat_at timestamptz,
+    lease_expires_at timestamptz
+);
+
+-- At most one active job per repository: makes "queue a sync" idempotent.
+create unique index if not exists idx_index_jobs_active_per_repo
+    on public.index_jobs (repo_id)
+    where status in ('queued', 'running');
+
+create index if not exists idx_index_jobs_status_requested
+    on public.index_jobs (status, requested_at);
+
+create index if not exists idx_index_jobs_repo_requested
+    on public.index_jobs (repo_id, requested_at desc);
+
+-- Pipeline fingerprint + per-file dependency-edge signatures so a change in one file
+-- can invalidate another file's imported_by/called_by metadata.
+alter table public.repositories add column if not exists pipeline_version text not null default '';
+alter table public.repositories add column if not exists file_edges jsonb not null default '{}'::jsonb;
+
+-- 8. Claim the oldest queued job atomically. `for update skip locked` makes this safe
+--    across multiple processes/replicas without an external queue.
+create or replace function public.claim_next_index_job(
+    p_worker_id text,
+    p_lease_seconds int default 900
+)
+returns setof public.index_jobs
+language sql
+security definer
+set search_path = public
+as $$
+    update public.index_jobs as job
+    set status = 'running',
+        worker_id = p_worker_id,
+        attempt = job.attempt + 1,
+        started_at = now(),
+        heartbeat_at = now(),
+        lease_expires_at = now() + make_interval(secs => p_lease_seconds)
+    where job.id = (
+        select pending.id
+        from public.index_jobs as pending
+        where pending.status = 'queued'
+        order by pending.requested_at
+        limit 1
+        for update skip locked
+    )
+    returning job.*;
+$$;
+
+-- 9. Copy unchanged files' chunks (embeddings included) into a staging run, entirely in
+--    Postgres. This is what makes an incremental index atomic: no row of the live run is
+--    touched, and the swap happens with a single active_run_id update.
+create or replace function public.copy_chunks_to_run(
+    p_repo_id uuid,
+    p_source_run uuid,
+    p_target_run uuid,
+    p_file_paths text[]
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+    copied integer := 0;
+begin
+    insert into public.code_chunks (
+        repo_id, run_id, file_path, content, start_line, end_line, node_type,
+        parent_class, symbol_name, imports, imported_by, calls, called_by,
+        inherits_from, search_text, search_terms, embedding
+    )
+    select
+        p_repo_id, p_target_run, file_path, content, start_line, end_line, node_type,
+        parent_class, symbol_name, imports, imported_by, calls, called_by,
+        inherits_from, search_text, search_terms, embedding
+    from public.code_chunks
+    where repo_id = p_repo_id
+      and run_id = p_source_run
+      and (p_file_paths is null or file_path = any(p_file_paths));
+
+    get diagnostics copied = row_count;
+    return copied;
+end;
+$$;
+
+grant execute on function public.claim_next_index_job(text, int),
+    public.copy_chunks_to_run(uuid, uuid, uuid, text[])
+    to anon, authenticated, service_role;
