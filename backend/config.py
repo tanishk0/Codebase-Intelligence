@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     EMBEDDING_DIMENSIONS: int = 1024
     EMBED_BATCH_SIZE: int = 32
     NVIDIA_REQUESTS_PER_MINUTE: int = 35  # Free tier is ~40 RPM; keep headroom
+    NVIDIA_INTERACTIVE_RESERVED_RPM: int = 10  # Reserved RPM headroom for chat while background jobs run
     SUPABASE_BATCH_SIZE: int = 100
 
     # Retrieval defaults
