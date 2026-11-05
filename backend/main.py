@@ -218,6 +218,7 @@ async def lifespan(_app: FastAPI):
         yield
     finally:
         sync_task.cancel()
+        worker_task.cancel()
 
 
 app = FastAPI(title="Codebase Copilot API", version="0.2.0", lifespan=lifespan)
@@ -379,9 +380,11 @@ async def ingest_repository(
 @app.post("/api/repos/{repo_id}/reindex")
 async def reindex_repository(
     repo_id: str,
+    background_tasks: BackgroundTasks,
+    wait: bool = Query(default=False),
     _auth: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
-    """Incrementally re-indexes an existing repository (re-embedding only files whose SHA-256 hash changed)."""
+    """Queues a background incremental re-index job (or runs synchronously when `?wait=true`)."""
     try:
         store = SupabaseVectorStore()
         repo = await asyncio.to_thread(store.get_repository, repo_id)
@@ -390,9 +393,15 @@ async def reindex_repository(
         repo_url = str(repo["repo_url"])
         branch = str(repo.get("branch") or "main")
 
-        lock = _SYNC_LOCKS.setdefault(repo_url, asyncio.Lock())
-        async with lock:
-            return await asyncio.to_thread(_execute_ingest, repo_url, branch, False)
+        if wait:
+            lock = _SYNC_LOCKS.setdefault(repo_url, asyncio.Lock())
+            async with lock:
+                return await asyncio.to_thread(_execute_ingest, repo_url, branch, False)
+
+        job, used_db = await asyncio.to_thread(_enqueue_reindex_job, repo_id, repo_url, branch, "incremental", False)
+        if not used_db and job["status"] == "queued":
+            background_tasks.add_task(_run_job_record, _MEMORY_JOBS[job["job_id"]], None)
+        return job
     except HTTPException:
         raise
     except Exception as exc:
@@ -405,27 +414,56 @@ async def sync_repository_async(
     background_tasks: BackgroundTasks,
     _auth: AuthContext = Depends(get_auth_context),
 ) -> dict[str, Any]:
-    """Queues an asynchronous incremental SHA-256 sync for an existing repository."""
+    """Queues an asynchronous incremental SHA-256 sync job for an existing repository."""
     try:
         store = SupabaseVectorStore()
-        repo = store.get_repository(repo_id)
+        repo = await asyncio.to_thread(store.get_repository, repo_id)
         if not repo:
             raise HTTPException(status_code=404, detail="Repository not found.")
         repo_url = str(repo["repo_url"])
         branch = str(repo.get("branch") or "main")
 
-        async def _bg_job() -> None:
-            lock = _SYNC_LOCKS.setdefault(repo_url, asyncio.Lock())
-            if not lock.locked():
-                async with lock:
-                    await asyncio.to_thread(_execute_ingest, repo_url, branch, False)
-
-        background_tasks.add_task(_bg_job)
-        return {"status": "queued", "repo_id": repo_id, "repo_url": repo_url}
+        job, used_db = await asyncio.to_thread(_enqueue_reindex_job, repo_id, repo_url, branch, "incremental", False)
+        if not used_db and job["status"] == "queued":
+            background_tasks.add_task(_run_job_record, _MEMORY_JOBS[job["job_id"]], None)
+        return job
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/jobs/{job_id}")
+def get_index_job(job_id: str) -> dict[str, Any]:
+    """Returns the current status and stats of a background indexing job."""
+    if job_id in _MEMORY_JOBS:
+        return {"job": public_job(_MEMORY_JOBS[job_id])}
+    try:
+        job_store = IndexJobStore()
+        row = job_store.get(job_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Job not found.")
+        return {"job": public_job(row)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/repos/{repo_id}/jobs")
+def list_repo_index_jobs(repo_id: str, limit: int = Query(default=10, ge=1, le=50)) -> dict[str, Any]:
+    """Lists recent indexing jobs for a repository."""
+    try:
+        job_store = IndexJobStore()
+        rows = job_store.list_for_repo(repo_id, limit=limit)
+        return {"jobs": [public_job(r) for r in rows]}
+    except Exception:
+        mem = [
+            public_job(r)
+            for r in sorted(_MEMORY_JOBS.values(), key=lambda x: str(x.get("requested_at") or ""), reverse=True)
+            if r.get("repo_id") == repo_id
+        ]
+        return {"jobs": mem[:limit]}
 
 
 @app.post("/api/chat")
