@@ -20,6 +20,10 @@ class NvidiaCrossEncoderReranker:
         endpoint: str | None = None,
         model: str | None = None,
         timeout: float = 30.0,
+        requests_per_minute: int | None = None,
+        max_retries: int = 3,
+        sleep: Callable[[float], None] = time.sleep,
+        rate_limiter: RateLimiter | None = None,
     ) -> None:
         self.api_key = api_key if api_key is not None else settings.NVIDIA_API_KEY
         if not self.api_key:
@@ -27,6 +31,15 @@ class NvidiaCrossEncoderReranker:
         self.endpoint = endpoint or settings.NVIDIA_RERANK_URL
         self.model = model or settings.NVIDIA_RERANK_MODEL
         self.timeout = timeout
+        self.max_retries = max_retries
+        self._sleep = sleep
+        rpm = requests_per_minute if requests_per_minute is not None else settings.NVIDIA_REQUESTS_PER_MINUTE
+        if rate_limiter is not None:
+            self.rate_limiter = rate_limiter
+        elif api_key is None and requests_per_minute is None and sleep is time.sleep:
+            self.rate_limiter = shared_rate_limiter("nvidia_nim", rpm)
+        else:
+            self.rate_limiter = RateLimiter(requests_per_minute or 0, sleep=sleep)
 
     @staticmethod
     def _passage(chunk: dict[str, Any]) -> str:
