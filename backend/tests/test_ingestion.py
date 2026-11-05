@@ -82,14 +82,20 @@ class TestIngestionHelpers(unittest.TestCase):
             with patch.object(Path, "is_symlink", return_value=True):
                 self.assertFalse(is_safe_path(inside, root))
 
+    def test_load_repository_files_enforces_max_total_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a.py").write_text("x = 1\n", encoding="utf-8")
+            (root / "b.py").write_text("y = " + ("1" * 100) + "\n", encoding="utf-8")
+
+            files = load_repository_files(root, max_total_bytes=20)
+            self.assertEqual([f.file_path for f in files], ["a.py"])
+
 
 class TestBackgroundReindexJobFlow(unittest.IsolatedAsyncioTestCase):
-    def setUp(self) -> None:
-        api_main._MEMORY_JOBS.clear()
-
     @patch("main.SupabaseVectorStore")
     @patch("main.IndexJobStore")
-    async def test_reindex_queues_durable_job_when_db_available(
+    async def test_reindex_queues_durable_job_and_schedules_worker_claim(
         self, mock_job_store_cls: MagicMock, mock_store_cls: MagicMock
     ) -> None:
         mock_store_cls.return_value.get_repository.return_value = {
