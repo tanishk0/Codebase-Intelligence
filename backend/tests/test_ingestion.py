@@ -119,16 +119,30 @@ class TestBackgroundReindexJobFlow(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["job_id"], "job-123")
         self.assertEqual(result["status"], "queued")
-        bg.add_task.assert_not_called()
+        bg.add_task.assert_called_once_with(api_main._claim_and_run_once)
 
     @patch("main._execute_ingest")
-    @patch("main.SupabaseVectorStore")
-    @patch("main.IndexJobStore", side_effect=RuntimeError("table missing"))
-    async def test_reindex_falls_back_to_memory_job_and_executes_in_bg(
-        self, _mock_job_store: MagicMock, mock_store_cls: MagicMock, mock_exec: MagicMock
+    async def test_run_job_record_sends_heartbeat_and_marks_job_succeeded(
+        self, mock_exec: MagicMock
     ) -> None:
-        mock_store_cls.return_value.get_repository.return_value = {
-            "id": "repo-2",
+        import asyncio
+
+        def slow_ingest(_url: str, _branch: str, _llm: bool) -> dict:
+            import time
+            time.sleep(0.05)
+            return {
+                "repo_id": "repo-2",
+                "changed_files": 1,
+                "unchanged_files": 4,
+                "deleted_files": 0,
+                "embedded_chunks": 3,
+            }
+
+        mock_exec.side_effect = slow_ingest
+        job_store = MagicMock()
+        job_record = {
+            "id": "job-456",
+            "repo_id": "repo-2",
             "repo_url": "https://github.com/org/repo2",
             "branch": "dev",
         }
