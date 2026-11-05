@@ -117,36 +117,143 @@ class ConversationalRAGEngine:
             user_prompt = user_message
         messages.append({"role": "user", "content": user_prompt})
 
+        return repo_id, conv, active_history, recent_window, rolling_summary, retrieval, messages
+
+    def _persist_turn(
+        self,
+        conversation_id: str | None,
+        conv: dict[str, Any] | None,
+        user_message: str,
+        answer: str,
+        retrieval: RetrievalResult,
+        active_history: list[dict[str, Any]],
+        recent_window: list[dict[str, Any]],
+        rolling_summary: str,
+    ) -> None:
+        if not conversation_id:
+            return
+        if str((conv or {}).get("title") or "") in {"", "New chat"}:
+            self.store.set_conversation_title(conversation_id, user_message)
+        self.store.save_message(
+            conversation_id=conversation_id,
+            role="user",
+            content=user_message,
+            standalone_query=retrieval.plan.standalone_query,
+        )
+        self.store.save_message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content=answer,
+            cited_chunk_ids=retrieval.cited_chunk_ids,
+        )
+        # Only fold turns that are actually being evicted from the sliding window as these 2 new
+        # messages push the oldest pair out, preventing duplicate re-summarization.
+        if len(recent_window) >= self.max_recent_messages:
+            evicted_pair = recent_window[:2]
+            self._refresh_rolling_summary(conversation_id, rolling_summary, evicted_pair)
+
+    def ask(
+        self,
+        user_message: str,
+        repo_id: str | None = None,
+        *,
+        conversation_id: str | None = None,
+        history: list[dict[str, Any]] | None = None,
+    ) -> ChatTurnResponse:
+        """Answers a user question (or follow-up) with automatic query rewriting and context carry-over."""
+        t_start = time.perf_counter()
+        _, conv, active_history, recent_window, rolling_summary, retrieval, messages = self._prepare_turn(
+            user_message=user_message,
+            repo_id=repo_id,
+            conversation_id=conversation_id,
+            history=history,
+        )
+
         # 5. Generate answer with the main Nemotron model (550B Ultra by default)
+        t_gen_start = time.perf_counter()
         answer = self.llm.complete(messages, use_fast_model=False, temperature=0.1, max_tokens=1200)
+        t_gen = (time.perf_counter() - t_gen_start) * 1000.0
         cited_ids = retrieval.cited_chunk_ids
 
         # 6. Persist turn & update rolling summary if conversation_id is active
-        if conversation_id:
-            if str((self.store.get_conversation(conversation_id) or {}).get("title") or "") in {"", "New chat"}:
-                self.store.set_conversation_title(conversation_id, user_message)
-            self.store.save_message(
-                conversation_id=conversation_id,
-                role="user",
-                content=user_message,
-                standalone_query=retrieval.plan.standalone_query,
-            )
-            self.store.save_message(
-                conversation_id=conversation_id,
-                role="assistant",
-                content=answer,
-                cited_chunk_ids=cited_ids,
-            )
-            if len(active_history) >= self.max_recent_messages:
-                self._refresh_rolling_summary(conversation_id, rolling_summary, recent_window[:2])
+        self._persist_turn(
+            conversation_id=conversation_id,
+            conv=conv,
+            user_message=user_message,
+            answer=answer,
+            retrieval=retrieval,
+            active_history=active_history,
+            recent_window=recent_window,
+            rolling_summary=rolling_summary,
+        )
 
+        timings = {
+            **retrieval.timings_ms,
+            "generate_ms": round(t_gen, 1),
+            "total_ms": round((time.perf_counter() - t_start) * 1000.0, 1),
+        }
         return ChatTurnResponse(
             answer=answer,
             plan=retrieval.plan,
             retrieval=retrieval,
             conversation_id=conversation_id,
             cited_chunk_ids=cited_ids,
+            timings_ms=timings,
         )
+
+    def ask_stream(
+        self,
+        user_message: str,
+        repo_id: str | None = None,
+        *,
+        conversation_id: str | None = None,
+        history: list[dict[str, Any]] | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        """Streams retrieval metadata followed by LLM token deltas and final turn summary."""
+        t_start = time.perf_counter()
+        _, conv, active_history, recent_window, rolling_summary, retrieval, messages = self._prepare_turn(
+            user_message=user_message,
+            repo_id=repo_id,
+            conversation_id=conversation_id,
+            history=history,
+        )
+        yield {
+            "type": "metadata",
+            "conversation_id": conversation_id,
+            "plan": retrieval.plan,
+            "retrieval": retrieval,
+        }
+
+        t_gen_start = time.perf_counter()
+        parts: list[str] = []
+        for delta in self.llm.stream(messages, use_fast_model=False, temperature=0.1, max_tokens=1200):
+            parts.append(delta)
+            yield {"type": "token", "delta": delta}
+        t_gen = (time.perf_counter() - t_gen_start) * 1000.0
+
+        answer = "".join(parts).strip()
+        self._persist_turn(
+            conversation_id=conversation_id,
+            conv=conv,
+            user_message=user_message,
+            answer=answer,
+            retrieval=retrieval,
+            active_history=active_history,
+            recent_window=recent_window,
+            rolling_summary=rolling_summary,
+        )
+        timings = {
+            **retrieval.timings_ms,
+            "generate_ms": round(t_gen, 1),
+            "total_ms": round((time.perf_counter() - t_start) * 1000.0, 1),
+        }
+        yield {
+            "type": "done",
+            "answer": answer,
+            "conversation_id": conversation_id,
+            "cited_chunk_ids": retrieval.cited_chunk_ids,
+            "timings_ms": timings,
+        }
 
     def _refresh_rolling_summary(
         self,
@@ -161,13 +268,14 @@ class ConversationalRAGEngine:
             {
                 "role": "system",
                 "content": (
-                    "Update the running conversation summary in 6-7 concise sentences, "
-                    "preserving exact file paths, class names, and function names discussed."
+                    "Update the running conversation summary in 5-6 concise sentences, "
+                    "preserving exact file paths, class names, and function names discussed. "
+                    "Do not repeat points already present in the previous summary."
                 ),
             },
             {
                 "role": "user",
-                "content": f"Previous summary:\n{previous_summary}\n\nNew turns to fold in:\n{turns_text}",
+                "content": f"Previous summary:\n{previous_summary}\n\nNewly evicted turns to fold in:\n{turns_text}",
             },
         ]
         try:
