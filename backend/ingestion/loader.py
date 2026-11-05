@@ -79,6 +79,8 @@ def load_repository_files(
         size = path.stat().st_size
         if size == 0 or size > settings.MAX_FILE_SIZE_BYTES:
             continue
+        if total_bytes + size > byte_budget:
+            break
 
         # 4. Check if text-readable
         if not is_text_file(path):
@@ -100,6 +102,7 @@ def load_repository_files(
                     content_hash=content_hash,
                 )
             )
+            total_bytes += size
         except Exception:
             continue
 
