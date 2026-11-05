@@ -1,10 +1,16 @@
 import json
 import re
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Iterator, Literal
 import httpx
 from config import settings
-from ingestion.embedder import MAX_BACKOFF_SECONDS, RETRYABLE_STATUS, RateLimiter, parse_retry_after
+from ingestion.embedder import (
+    MAX_BACKOFF_SECONDS,
+    RETRYABLE_STATUS,
+    RateLimiter,
+    parse_retry_after,
+    shared_rate_limiter,
+)
 
 _THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
