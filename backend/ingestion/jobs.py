@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from supabase import Client, create_client
+from supabase import Client
 from config import settings
 
 ACTIVE_STATUSES = ("queued", "running")
