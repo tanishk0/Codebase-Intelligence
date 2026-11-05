@@ -125,67 +125,66 @@ class RepoSummarizer:
                     parsed = self.llm.complete_json(
                         messages, use_fast_model=True, max_tokens=512, priority="background"
                     )
-                    if isinstance(parsed, dict):
-                        for fp, desc in parsed.items():
-                            if isinstance(desc, str) and desc.strip():
-                                llm_descriptions[fp] = desc.strip()
-                except Exception:
-                    # Fallback cleanly to the structural outline if the LLM call fails or times out
-                    pass
-
-        summary_chunks: list[CodeChunk] = []
-        for fp, f_chunks in sorted(by_file.items()):
-            max_line = max((c.end_line for c in f_chunks), default=1)
-            outline = outlines[fp]
-            desc = llm_descriptions.get(fp)
-            content = f"{outline}\nSummary: {desc}" if desc else outline
-            summary_chunks.append(
-                CodeChunk(
-                    file_path=fp,
-                    content=content,
-                    start_line=1,
-                    end_line=max_line,
-                    node_type="file_summary",
-                    parent_class="",
-                    symbol_name=Path(fp).name,
-                    imports=list(f_chunks[0].imports),
-                    imported_by=list(f_chunks[0].imported_by),
-                )
-            )
-        return summary_chunks
-
-    def build_repo_summary(
-        self,
-        repo_url: str,
-        file_summary_chunks: list[CodeChunk],
-        *,
-        use_llm: bool = False,
-    ) -> str:
-        """Builds a concise repository-level overview from the file tree and file summaries."""
-        file_paths = [c.file_path for c in file_summary_chunks]
-        tree_block = "Files:\n" + "\n".join(f"- {fp}" for fp in file_paths[:60])
-        outlines_block = "\n\n".join(c.content for c in file_summary_chunks[:25])
-        structural_overview = f"Repository: {repo_url}\n{tree_block}\n\nKey Modules:\n{outlines_block[:2500]}"
-
-        if not use_llm or self.llm is None:
-            return structural_overview
-
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are a senior software architect. Given a repository's file list and module outlines, "
-                    "write a concise (~150-250 word) architectural overview covering its purpose, main components, "
-                    "and how data flows through the system."
-                ),
-            },
-            {"role": "user", "content": structural_overview},
-        ]
-        try:
-            llm_summary = self.llm.complete(messages, use_fast_model=True, max_tokens=400)
-            if llm_summary:
-                return f"Repository: {repo_url}\n\nArchitecture Overview:\n{llm_summary}\n\n{tree_block}"
-        except Exception:
-            pass
-        return structural_overview
-
+                        for fp, desc in parsed.items():
+                            if isinstance(desc, str) and desc.strip():
+                                llm_descriptions[fp] = desc.strip()
+                except Exception:
+                    # Fallback cleanly to the structural outline if the LLM call fails or times out
+                    pass
+
+        summary_chunks: list[CodeChunk] = []
+        for fp, f_chunks in sorted(by_file.items()):
+            max_line = max((c.end_line for c in f_chunks), default=1)
+            outline = outlines[fp]
+            desc = llm_descriptions.get(fp)
+            content = f"{outline}\nSummary: {desc}" if desc else outline
+            summary_chunks.append(
+                CodeChunk(
+                    file_path=fp,
+                    content=content,
+                    start_line=1,
+                    end_line=max_line,
+                    node_type="file_summary",
+                    parent_class="",
+                    symbol_name=Path(fp).name,
+                    imports=list(f_chunks[0].imports),
+                    imported_by=list(f_chunks[0].imported_by),
+                )
+            )
+        return summary_chunks
+
+    def build_repo_summary(
+        self,
+        repo_url: str,
+        file_summary_chunks: list[CodeChunk],
+        *,
+        use_llm: bool = False,
+    ) -> str:
+        """Builds a concise repository-level overview from the file tree and file summaries."""
+        file_paths = [c.file_path for c in file_summary_chunks]
+        tree_block = "Files:\n" + "\n".join(f"- {fp}" for fp in file_paths[:60])
+        outlines_block = "\n\n".join(c.content for c in file_summary_chunks[:25])
+        structural_overview = f"Repository: {repo_url}\n{tree_block}\n\nKey Modules:\n{outlines_block[:2500]}"
+
+        if not use_llm or self.llm is None:
+            return structural_overview
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a senior software architect. Given a repository's file list and module outlines, "
+                    "write a concise (~150-250 word) architectural overview covering its purpose, main components, "
+                    "and how data flows through the system."
+                ),
+            },
+            {"role": "user", "content": structural_overview},
+        ]
+        try:
+            llm_summary = self.llm.complete(messages, use_fast_model=True, max_tokens=400)
+            if llm_summary:
+                return f"Repository: {repo_url}\n\nArchitecture Overview:\n{llm_summary}\n\n{tree_block}"
+        except Exception:
+            pass
+        return structural_overview
+
