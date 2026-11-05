@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+import time
 from typing import Any
 from config import settings
 from ingestion.embedder import NvidiaEmbedder
@@ -14,6 +15,7 @@ class RetrievalResult:
     chunks: list[dict[str, Any]] = field(default_factory=list)
     repo_summary: str = ""
     no_relevant_code: bool = False
+    timings_ms: dict[str, float] = field(default_factory=dict)
 
     @property
     def cited_chunk_ids(self) -> list[int]:
@@ -23,10 +25,10 @@ class RetrievalResult:
             if c.get("id") is not None and not c.get("is_context_expansion")
         ]
 
-    def format_context_for_llm(self) -> str:
+    def format_context_for_llm(self, include_repo_summary: bool = True) -> str:
         """Formats the retrieved chunks and repository summary into a cited prompt block."""
         sections: list[str] = []
-        if self.repo_summary:
+        if include_repo_summary and self.repo_summary:
             sections.append(f"## Repository Overview\n{self.repo_summary}")
 
         if self.chunks:
@@ -74,7 +76,7 @@ class CodebaseRetriever:
 
     @staticmethod
     def _extract_dependency_symbols(chunks: list[dict[str, Any]], max_primary: int = 3) -> list[str]:
-        """Collects 1-hop callees, callers, and base classes from the top primary chunks."""
+        """Collects 1-hop qualified callers from the top primary chunks."""
         primary_symbols = {
             str(c.get("symbol_name") or "")
             for c in chunks
@@ -84,7 +86,6 @@ class CodebaseRetriever:
         seen: set[str] = set()
 
         for c in chunks[:max_primary]:
-            calls_list = [str(x) for x in (c.get("calls") or []) if x]
             called_by_list = [str(x) for x in (c.get("called_by") or []) if x]
             inherits_list = [str(x) for x in (c.get("inherits_from") or []) if x]
 
