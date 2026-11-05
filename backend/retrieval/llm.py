@@ -74,7 +74,12 @@ class NvidiaChatClient:
         self.timeout = timeout
         self._sleep = sleep
         rpm = requests_per_minute if requests_per_minute is not None else settings.NVIDIA_REQUESTS_PER_MINUTE
-        self.rate_limiter = rate_limiter or RateLimiter(rpm, sleep=sleep)
+        if rate_limiter is not None:
+            self.rate_limiter = rate_limiter
+        elif requests_per_minute is None and sleep is time.sleep:
+            self.rate_limiter = shared_rate_limiter("nvidia_nim", rpm)
+        else:
+            self.rate_limiter = RateLimiter(rpm, sleep=sleep)
 
     def _backoff(self, attempt: int, response: httpx.Response | None = None) -> float:
         retry_after = parse_retry_after(response.headers.get("Retry-After")) if response is not None else None
@@ -89,6 +94,7 @@ class NvidiaChatClient:
         model: str | None = None,
         temperature: float = 0.1,
         max_tokens: int = 1024,
+        priority: Literal["interactive", "background"] = "interactive",
     ) -> str:
         """Runs a chat completion against NVIDIA NIM and returns the assistant message text."""
         chosen_model = model or (self.fast_model if use_fast_model else self.chat_model)
@@ -108,7 +114,7 @@ class NvidiaChatClient:
         with httpx.Client(timeout=self.timeout) as client:
             for attempt in range(self.max_retries + 1):
                 is_last = attempt == self.max_retries
-                self.rate_limiter.wait()
+                self.rate_limiter.wait(priority)
 
                 try:
                     response = client.post(url, headers=headers, json=payload)
