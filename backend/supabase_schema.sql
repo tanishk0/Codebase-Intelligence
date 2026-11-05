@@ -403,3 +403,59 @@ $$;
 grant execute on function public.claim_next_index_job(text, int),
     public.copy_chunks_to_run(uuid, uuid, uuid, text[])
     to anon, authenticated, service_role;
+
+-- 10. Atomically replace the chunks of a group of files inside the active run.
+--     DELETE + INSERT run in one transaction, so a reader sees either the old version of a
+--     file or the new one, never a file with zero chunks. Incremental sync calls this once
+--     per small group of changed files, which keeps the request payload and RAM bounded.
+create or replace function public.replace_file_chunks(
+    p_repo_id uuid,
+    p_run_id uuid,
+    p_file_paths text[],
+    p_rows jsonb
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+    inserted integer := 0;
+begin
+    delete from public.code_chunks
+    where repo_id = p_repo_id
+      and run_id = p_run_id
+      and file_path = any(p_file_paths);
+
+    insert into public.code_chunks (
+        repo_id, run_id, file_path, content, start_line, end_line, node_type,
+        parent_class, symbol_name, imports, imported_by, calls, called_by,
+        inherits_from, search_text, search_terms, embedding
+    )
+    select
+        p_repo_id,
+        p_run_id,
+        r->>'file_path',
+        r->>'content',
+        (r->>'start_line')::int,
+        (r->>'end_line')::int,
+        r->>'node_type',
+        coalesce(r->>'parent_class', ''),
+        coalesce(r->>'symbol_name', ''),
+        coalesce(array(select jsonb_array_elements_text(r->'imports')), '{}'),
+        coalesce(array(select jsonb_array_elements_text(r->'imported_by')), '{}'),
+        coalesce(array(select jsonb_array_elements_text(r->'calls')), '{}'),
+        coalesce(array(select jsonb_array_elements_text(r->'called_by')), '{}'),
+        coalesce(array(select jsonb_array_elements_text(r->'inherits_from')), '{}'),
+        coalesce(r->>'search_text', ''),
+        coalesce(array(select jsonb_array_elements_text(r->'search_terms')), '{}'),
+        (r->>'embedding')::vector
+    from jsonb_array_elements(coalesce(p_rows, '[]'::jsonb)) as r;
+
+    get diagnostics inserted = row_count;
+    return inserted;
+end;
+$$;
+
+grant execute on function public.replace_file_chunks(uuid, uuid, text[], jsonb)
+    to anon, authenticated, service_role;
