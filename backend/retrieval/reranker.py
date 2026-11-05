@@ -1,14 +1,10 @@
 from collections import defaultdict
-import re
-from typing import Any
+import time
+from typing import Any, Callable
 import httpx
 from config import settings
-from ingestion.chunker import split_chunk_headers, split_identifier_tokens
-from retrieval.query_router import QueryPlan
-
-_WORD_RE = re.compile(r"[a-z0-9]{2,}")
-_TEST_FILE_RE = re.compile(r"(^|/)(tests?|__tests__|spec|fixtures?|mocks?)/|(\.|_)test\.|(\.|_)spec\.", re.IGNORECASE)
-_strip_chunk_header = split_chunk_header = split_chunk_headers
+from ingestion.chunker import split_chunk_headers
+from ingestion.embedder import MAX_BACKOFF_SECONDS, RateLimiter, parse_retry_after, shared_rate_limiter
 
 
 class RerankerServiceError(RuntimeError):
