@@ -56,8 +56,8 @@ def load_repository_files(
     total_bytes = 0
     byte_budget = max_total_bytes if max_total_bytes is not None else settings.MAX_TOTAL_BYTES
 
-    # Sorted so that hitting MAX_TOTAL_FILES selects the same subset on every run. With raw
-    # rglob order (filesystem-dependent) a repo above the cap produced different manifests
+    # Sorted so that hitting MAX_TOTAL_FILES or MAX_TOTAL_BYTES selects the same subset on every run.
+    # With raw rglob order (filesystem-dependent) a repo above the cap produced different manifests
     # each sync, which looked like a mass rename and re-embedded the whole index.
     for path in sorted(repo_root.rglob("*")):
         # 0. Security: skip symlinks and paths escaping the repo root
@@ -75,7 +75,7 @@ def load_repository_files(
         if path.suffix.lower() in settings.IGNORED_EXTENSIONS:
             continue
 
-        # 3. Check file size
+        # 3. Check file size and cumulative repository byte budget
         size = path.stat().st_size
         if size == 0 or size > settings.MAX_FILE_SIZE_BYTES:
             continue
