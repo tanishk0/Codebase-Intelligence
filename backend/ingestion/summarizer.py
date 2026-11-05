@@ -1,130 +1,131 @@
-from collections import defaultdict
-from pathlib import Path
-from ingestion.chunker import CodeChunk
-from retrieval.llm import NvidiaChatClient
-
-
-def _extract_signature_and_doc(chunk: CodeChunk) -> str:
-    """Extracts the declaration signature and first docstring line from a code chunk."""
-    code_lines = [line.strip() for line in chunk.code_lines() if line.strip()]
-    if not code_lines:
-        return chunk.symbol_name or chunk.node_type
-
-    # Find first non-decorator signature line
-    sig = next((l for l in code_lines if not l.startswith("@")), code_lines[0])[:120]
-
-    # Look for a docstring line right after the signature
-    doc = ""
-    for line in code_lines[1:5]:
-        cleaned = line.strip("\"' \t")
-        if cleaned and not cleaned.startswith("#"):
-            if line.startswith(('"""', "'''", "/**", "//", "#")):
-                doc = f" — {cleaned[:100]}"
-                break
-    return f"{sig}{doc}"
-
-
-def build_file_outline(file_path: str, file_chunks: list[CodeChunk]) -> str:
-    """Builds a compact structural outline of a file from its AST chunks (zero LLM calls)."""
-    if not file_chunks:
-        return f"# File Summary: {file_path}"
-
-    classes: list[str] = []
-    functions: list[str] = []
-    methods_by_class: dict[str, list[str]] = defaultdict(list)
-    preamble_preview: list[str] = []
-    repo_imports = list(file_chunks[0].imports)
-    imported_by = list(file_chunks[0].imported_by)
-
-    for c in file_chunks:
-        if c.node_type == "module_preamble" and not preamble_preview:
-            preamble_preview = [l.strip() for l in c.code_lines() if l.strip()][:6]
-        elif c.node_type in {"class", "class_header"}:
-            sig = _extract_signature_and_doc(c)
-            if c.inherits_from:
-                sig += f" (inherits {', '.join(c.inherits_from)})"
-            classes.append(sig)
-        elif c.node_type == "function":
-            functions.append(_extract_signature_and_doc(c))
-        elif c.node_type == "method":
-            parent = c.parent_class or "Class"
-            methods_by_class[parent].append(c.symbol_name or _extract_signature_and_doc(c))
-
-    parts = [f"# File Summary: {file_path}"]
-    if repo_imports:
-        parts.append("Repo Imports: " + ", ".join(repo_imports[:8]))
-    if imported_by:
-        parts.append("Imported By: " + ", ".join(imported_by[:8]))
-    if preamble_preview:
-        parts.append("Imports/Setup: " + "; ".join(preamble_preview[:4]))
-    if classes:
-        parts.append("Classes: " + " | ".join(classes))
-    for cls_name, methods in methods_by_class.items():
-        unique_methods = list(dict.fromkeys(methods))
-        parts.append(f"Methods of {cls_name}: {', '.join(unique_methods)}")
-    if functions:
-        parts.append("Functions: " + " | ".join(functions))
-
-    # Fallback for non-AST files (Markdown, configs, JSON)
-    if len(parts) == 1:
-        preview = [l.strip() for l in file_chunks[0].code_lines() if l.strip()][:8]
-        parts.append("Preview: " + " / ".join(preview))
-
-    return "\n".join(parts)
-
-
-class RepoSummarizer:
-    """Generates file-level summary chunks and a repository-wide architectural overview."""
-
-    def __init__(
-        self,
-        llm_client: NvidiaChatClient | None = None,
-        files_per_llm_batch: int = 6,
-    ) -> None:
-        self.llm = llm_client
-        self.files_per_llm_batch = files_per_llm_batch
-
-    def build_file_summary_chunks(
-        self,
-        chunks: list[CodeChunk],
-        *,
-        use_llm: bool = False,
-    ) -> list[CodeChunk]:
-        """Creates one `file_summary` CodeChunk per source file from its AST outline.
-
-        When `use_llm=True` and an `NvidiaChatClient` is configured, batches multiple file outlines per
-        LLM request to prepend a concise natural-language summary without blowing the RPM budget.
-        """
-        by_file: dict[str, list[CodeChunk]] = defaultdict(list)
-        for chunk in chunks:
-            if chunk.node_type != "file_summary":
-                by_file[chunk.file_path].append(chunk)
-
-        outlines: dict[str, str] = {
-            fp: build_file_outline(fp, f_chunks) for fp, f_chunks in sorted(by_file.items())
-        }
-
-        llm_descriptions: dict[str, str] = {}
-        if use_llm and self.llm is not None and outlines:
-            items = list(outlines.items())
-            for start in range(0, len(items), self.files_per_llm_batch):
-                batch = items[start : start + self.files_per_llm_batch]
-                prompt_block = "\n\n".join(f"### {fp}\n{outline}" for fp, outline in batch)
-                messages = [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You summarize code files from their structural outlines. "
-                            "Return ONLY a JSON object mapping each exact file path to a 1-2 sentence "
-                            "summary of its responsibility and key symbols."
-                        ),
-                    },
-                    {"role": "user", "content": prompt_block},
-                ]
-                try:
-                    parsed = self.llm.complete_json(
-                        messages, use_fast_model=True, max_tokens=512, priority="background"
-                    )
+from collections import defaultdict
+from pathlib import Path
+from ingestion.chunker import CodeChunk
+from retrieval.llm import NvidiaChatClient
+
+
+def _extract_signature_and_doc(chunk: CodeChunk) -> str:
+    """Extracts the declaration signature and first docstring line from a code chunk."""
+    code_lines = [line.strip() for line in chunk.code_lines() if line.strip()]
+    if not code_lines:
+        return chunk.symbol_name or chunk.node_type
+
+    # Find first non-decorator signature line
+    sig = next((l for l in code_lines if not l.startswith("@")), code_lines[0])[:120]
+
+    # Look for a docstring line right after the signature
+    doc = ""
+    for line in code_lines[1:5]:
+        cleaned = line.strip("\"' \t")
+        if cleaned and not cleaned.startswith("#"):
+            if line.startswith(('"""', "'''", "/**", "//", "#")):
+                doc = f" — {cleaned[:100]}"
+                break
+    return f"{sig}{doc}"
+
+
+def build_file_outline(file_path: str, file_chunks: list[CodeChunk]) -> str:
+    """Builds a compact structural outline of a file from its AST chunks (zero LLM calls)."""
+    if not file_chunks:
+        return f"# File Summary: {file_path}"
+
+    classes: list[str] = []
+    functions: list[str] = []
+    methods_by_class: dict[str, list[str]] = defaultdict(list)
+    preamble_preview: list[str] = []
+    repo_imports = list(file_chunks[0].imports)
+    imported_by = list(file_chunks[0].imported_by)
+
+    for c in file_chunks:
+        if c.node_type == "module_preamble" and not preamble_preview:
+            preamble_preview = [l.strip() for l in c.code_lines() if l.strip()][:6]
+        elif c.node_type in {"class", "class_header"}:
+            sig = _extract_signature_and_doc(c)
+            if c.inherits_from:
+                sig += f" (inherits {', '.join(c.inherits_from)})"
+            classes.append(sig)
+        elif c.node_type == "function":
+            functions.append(_extract_signature_and_doc(c))
+        elif c.node_type == "method":
+            parent = c.parent_class or "Class"
+            methods_by_class[parent].append(c.symbol_name or _extract_signature_and_doc(c))
+
+    parts = [f"# File Summary: {file_path}"]
+    if repo_imports:
+        parts.append("Repo Imports: " + ", ".join(repo_imports[:8]))
+    if imported_by:
+        parts.append("Imported By: " + ", ".join(imported_by[:8]))
+    if preamble_preview:
+        parts.append("Imports/Setup: " + "; ".join(preamble_preview[:4]))
+    if classes:
+        parts.append("Classes: " + " | ".join(classes))
+    for cls_name, methods in methods_by_class.items():
+        unique_methods = list(dict.fromkeys(methods))
+        parts.append(f"Methods of {cls_name}: {', '.join(unique_methods)}")
+    if functions:
+        parts.append("Functions: " + " | ".join(functions))
+
+    # Fallback for non-AST files (Markdown, configs, JSON)
+    if len(parts) == 1:
+        preview = [l.strip() for l in file_chunks[0].code_lines() if l.strip()][:8]
+        parts.append("Preview: " + " / ".join(preview))
+
+    return "\n".join(parts)
+
+
+class RepoSummarizer:
+    """Generates file-level summary chunks and a repository-wide architectural overview."""
+
+    def __init__(
+        self,
+        llm_client: NvidiaChatClient | None = None,
+        files_per_llm_batch: int = 6,
+    ) -> None:
+        self.llm = llm_client
+        self.files_per_llm_batch = files_per_llm_batch
+
+    def build_file_summary_chunks(
+        self,
+        chunks: list[CodeChunk],
+        *,
+        use_llm: bool = False,
+    ) -> list[CodeChunk]:
+        """Creates one `file_summary` CodeChunk per source file from its AST outline.
+
+        When `use_llm=True` and an `NvidiaChatClient` is configured, batches multiple file outlines per
+        LLM request to prepend a concise natural-language summary without blowing the RPM budget.
+        """
+        by_file: dict[str, list[CodeChunk]] = defaultdict(list)
+        for chunk in chunks:
+            if chunk.node_type != "file_summary":
+                by_file[chunk.file_path].append(chunk)
+
+        outlines: dict[str, str] = {
+            fp: build_file_outline(fp, f_chunks) for fp, f_chunks in sorted(by_file.items())
+        }
+
+        llm_descriptions: dict[str, str] = {}
+        if use_llm and self.llm is not None and outlines:
+            items = list(outlines.items())
+            for start in range(0, len(items), self.files_per_llm_batch):
+                batch = items[start : start + self.files_per_llm_batch]
+                prompt_block = "\n\n".join(f"### {fp}\n{outline}" for fp, outline in batch)
+                messages = [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You summarize code files from their structural outlines. "
+                            "Return ONLY a JSON object mapping each exact file path to a 1-2 sentence "
+                            "summary of its responsibility and key symbols."
+                        ),
+                    },
+                    {"role": "user", "content": prompt_block},
+                ]
+                try:
+                    parsed = self.llm.complete_json(
+                        messages, use_fast_model=True, max_tokens=512, priority="background"
+                    )
+                    if isinstance(parsed, dict):
                         for fp, desc in parsed.items():
                             if isinstance(desc, str) and desc.strip():
                                 llm_descriptions[fp] = desc.strip()
