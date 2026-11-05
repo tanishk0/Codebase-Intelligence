@@ -390,35 +390,20 @@ class SupabaseVectorStore:
                         use_llm=llm_summaries,
                     )
 
-                unchanged_chunk_count = sum(1 for c in all_chunks if c.file_path not in changed_set)
-                chunks_to_embed = [c for c in all_chunks if c.file_path in changed_set]
+                chunks_by_file: dict[str, list[CodeChunk]] = defaultdict(list)
+                unchanged_chunk_count = 0
+                for chunk in all_chunks:
+                    if chunk.file_path in changed_set:
+                        chunks_by_file[chunk.file_path].append(chunk)
+                    else:
+                        unchanged_chunk_count += 1
 
-                # 1. Embed changed files in memory BEFORE touching the database.
-                # If the embedding API fails or times out, the live index is 100% untouched.
-                embedded_batches: list[list[EmbeddedChunk]] = []
-                if chunks_to_embed:
-                    for batch in active_embedder.iter_embedded_chunks(chunks_to_embed):
-                        for item in batch:
-                            if len(item.embedding) != active_embedder.dimensions:
-                                raise ValueError(
-                                    f"Embedding dimension mismatch: got {len(item.embedding)}, "
-                                    f"expected {active_embedder.dimensions} (check schema vector size)."
-                                )
-                        embedded_batches.append(batch)
+                # Unchanged files' rows are never touched. Changed and deleted files are swapped
+                # in bounded, individually atomic groups inside the existing active run.
+                embedded_count = self._replace_changed_files(
+                    repo_id, active_run_id, active_embedder, paths_to_replace, chunks_by_file
+                )
 
-                # 2. Swap only changed/deleted files in-place within the existing active_run_id.
-                # Unchanged files' rows stay untouched in Postgres (zero row duplication).
-                self.delete_chunks_for_files(repo_id, active_run_id, files_to_delete)
-
-                embedded_count = 0
-                for batch in embedded_batches:
-                    embedded_count += self.insert_chunks(
-                        repo_id=repo_id,
-                        run_id=active_run_id,
-                        embedded_chunks=batch,
-                    )
-
-                # 3. Update repository manifest and chunk count on the same active_run_id.
                 activated = self._activate_run(
                     repo_id=repo_id,
                     run_id=active_run_id,
@@ -432,9 +417,7 @@ class SupabaseVectorStore:
                     expected_run_id=active_run_id,
                 )
                 if not activated:
-                    raise RuntimeError(
-                        "The active index changed while this sync was running."
-                    )
+                    raise RuntimeError("The active index changed while this sync was running.")
 
                 self.last_sync_stats = {
                     "mode": "incremental",
@@ -443,7 +426,6 @@ class SupabaseVectorStore:
                     "unchanged_files": len(unchanged_files),
                     "deleted_files": len(deleted_files),
                     "reused_chunks": unchanged_chunk_count,
-                    "copied_chunks": unchanged_chunk_count,
                     "embedded_chunks": embedded_count,
                 }
                 return repo_id
@@ -456,6 +438,8 @@ class SupabaseVectorStore:
             analyzer = dependency_analyzer or DependencyAnalyzer()
             analyzer.analyze(all_chunks, files=files)
             file_edges = self._file_edge_signatures(all_chunks)
+        for f in files or []:
+            f.content = ""
 
         repo_summary = ""
         if include_summaries and all_chunks:
@@ -471,12 +455,7 @@ class SupabaseVectorStore:
         total = 0
         try:
             for embedded_batch in active_embedder.iter_embedded_chunks(all_chunks):
-                for item in embedded_batch:
-                    if len(item.embedding) != active_embedder.dimensions:
-                        raise ValueError(
-                            f"Embedding dimension mismatch: got {len(item.embedding)}, "
-                            f"expected {active_embedder.dimensions} (check schema vector size)."
-                        )
+                self._check_dimensions(embedded_batch, active_embedder.dimensions)
                 total += self.insert_chunks(repo_id=repo_id, run_id=run_id, embedded_chunks=embedded_batch)
 
             self._activate_run(
@@ -533,31 +512,8 @@ class SupabaseVectorStore:
             "match_repo_id": repo_id,
             "match_count": match_count,
         }
-        vector_rows: list[dict[str, Any]] = []
-        try:
-            vector_rows = list(self.client.rpc("semantic_search_code_chunks", vector_params).execute().data or [])
-        except Exception:
-            vector_rows = []
-
-        bm25_rows: list[dict[str, Any]] = []
-        try:
-            bm25_rows = list(self.client.rpc("bm25_search_code_chunks", bm25_params).execute().data or [])
-        except Exception:
-            bm25_rows = []
-
-        if not vector_rows and not bm25_rows:
-            try:
-                legacy_params = {
-                    "query_embedding": query_embedding,
-                    "query_text": expanded_query_text,
-                    "match_repo_id": repo_id,
-                    "match_count": match_count,
-                    "rrf_k": rrf_k,
-                }
-                fallback_rows = list(self.client.rpc("hybrid_search_code_chunks", legacy_params).execute().data or [])
-                return fallback_rows[:match_count]
-            except Exception:
-                pass
+        vector_rows = list(self.client.rpc("semantic_search_code_chunks", vector_params).execute().data or [])
+        bm25_rows = list(self.client.rpc("bm25_search_code_chunks", bm25_params).execute().data or [])
 
         fused: dict[int, dict[str, Any]] = {}
         for rank, row in enumerate(vector_rows, start=1):
@@ -592,12 +548,14 @@ class SupabaseVectorStore:
         parent_classes: list[str],
         dependency_symbols: list[str] | None = None,
         max_dependency_chunks: int = 4,
+        active_run_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Fetches module_preamble, class_header, and 1-hop dependency neighbor chunks for top hits."""
         if not file_paths and not dependency_symbols:
             return []
-        repo = self.get_repository(repo_id)
-        active_run_id = repo.get("active_run_id") if repo else None
+        if not active_run_id:
+            repo = self.get_repository(repo_id)
+            active_run_id = str(repo.get("active_run_id") or "") if repo else ""
         if not active_run_id:
             return []
 
@@ -685,12 +643,18 @@ class SupabaseVectorStore:
 
         return neighbors
 
-    def fetch_chunks_by_ids(self, repo_id: str, chunk_ids: list[int]) -> list[dict[str, Any]]:
+    def fetch_chunks_by_ids(
+        self,
+        repo_id: str,
+        chunk_ids: list[int],
+        active_run_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Re-fetches carry-over chunks only from the repository's currently active index run."""
         if not chunk_ids:
             return []
-        repo = self.get_repository(repo_id)
-        active_run_id = repo.get("active_run_id") if repo else None
+        if not active_run_id:
+            repo = self.get_repository(repo_id)
+            active_run_id = str(repo.get("active_run_id") or "") if repo else ""
         if not active_run_id:
             return []
         cols = "id,repo_id,file_path,content,start_line,end_line,node_type,parent_class,symbol_name"
