@@ -98,26 +98,50 @@ function renderChunksDrawer(chunks) {
 }
 function appendAssistantResponse(data) {
   const div = document.createElement("div"); div.className = "msg assistant";
-  const chunks = (data.chunks || []).map((chunk, index) => `<div class="chunk-card"><div class="chunk-card-header"><span>#${index + 1} ${escapeHtml(chunk.file_path)}:L${chunk.start_line}-L${chunk.end_line}</span></div><pre>${escapeHtml(chunk.content)}</pre></div>`).join("");
-  div.innerHTML = `<div class="msg-content">${renderMarkdownLite(data.answer)}</div>${chunks ? `<details class="chunks-drawer"><summary>Inspect Retrieved Chunks (${data.chunks.length})</summary>${chunks}</details>` : ""}`; els.chatMessages.appendChild(div);
+  div.innerHTML = `<div class="msg-content">${renderMarkdownLite(data.answer)}</div>${renderChunksDrawer(data.chunks)}`; els.chatMessages.appendChild(div);
 }
 async function refreshActivePageState() { if (!state.conversationId) return; const data = await fetchMessagePage(); state.hasMoreMessages = Boolean(data.has_more); state.oldestMessageId = data.next_before_id || (data.messages[0] && data.messages[0].id) || null; }
 async function sendChatMessage(message) {
   if (!state.activeRepoId) { els.ingestStatus.textContent = "Select a repository before sending a message."; return; }
   appendStoredMessage({ role: "user", content: message }); els.sendBtn.disabled = true; els.chatInput.disabled = true;
-  const thinking = document.createElement("div"); thinking.className = "msg assistant"; thinking.textContent = "Searching the codebase..."; els.chatMessages.appendChild(thinking); scrollBottom();
+  const assistantDiv = document.createElement("div"); assistantDiv.className = "msg assistant";
+  assistantDiv.innerHTML = `<div class="msg-content">Searching the codebase...</div>`;
+  els.chatMessages.appendChild(assistantDiv); scrollBottom();
+  const contentEl = assistantDiv.querySelector(".msg-content");
   try {
-    const data = await api("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message, repo_id: state.activeRepoId, conversation_id: state.conversationId }) });
-    thinking.remove(); state.conversationId = data.conversation_id; appendAssistantResponse(data); await refreshActivePageState(); await loadConversations(); renderConversations();
-  } catch (err) { thinking.textContent = `Error: ${err.message}`; }
-  finally { els.sendBtn.disabled = false; els.chatInput.disabled = false; els.chatInput.focus(); }
-}
-function formatSyncMessage(data) {
-  if (typeof data.unchanged_files === "number" && data.unchanged_files > 0) {
-    if ((data.changed_files || 0) === 0 && (data.deleted_files || 0) === 0) {
-      return `✓ Up to date: ${data.unchanged_files} files unchanged (0 chunks re-embedded).`;
-    }
-    return `✓ Synced: ${data.changed_files || 0} changed, ${data.unchanged_files} unchanged (${data.embedded_chunks || 0} chunks re-embedded).`;
+    const headers = { "Content-Type": "application/json" };
+    if (state.authToken) headers["Authorization"] = `Bearer ${state.authToken}`;
+    const res = await fetch("/api/chat/stream", { method: "POST", headers, body: JSON.stringify({ message, repo_id: state.activeRepoId, conversation_id: state.conversationId }) });
+    if (!res.ok || !res.body) {
+      const data = await api("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message, repo_id: state.activeRepoId, conversation_id: state.conversationId }) });
+      assistantDiv.remove(); state.conversationId = data.conversation_id; appendAssistantResponse(data);
+    } else {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = ""; let fullAnswer = ""; let retrievedChunks = [];
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split("\n\n");
+        buffer = events.pop() || "";
+        for (const rawEvent of events) {
+          const line = rawEvent.trim();
+          if (!line.startsWith("data:")) continue;
+          const evt = JSON.parse(line.slice(5).trim());
+          if (evt.type === "error") throw new Error(evt.detail || "Stream failed");
+          if (evt.type === "metadata") {
+            if (evt.conversation_id) state.conversationId = evt.conversation_id;
+            retrievedChunks = evt.chunks || [];
+            contentEl.textContent = "Generating answer...";
+          } else if (evt.type === "token") {
+            fullAnswer += evt.delta || "";
+            contentEl.innerHTML = renderMarkdownLite(fullAnswer);
+            scrollBottom();
+          } else if (evt.type === "done") {
+            if (evt.conversation_id) state.conversationId = evt.conversation_id;
+            fullAnswer = evt.answer || fullAnswer;
+            assistantDiv.innerHTML = `<div class="msg-content">${renderMarkdownLite(fullAnswer)}</div>${renderChunksDrawer(retrievedChunks)}`;
   }
   return `✓ Indexed ${data.file_count} files (${data.total_indexed_chunks} chunks).`;
 }
