@@ -184,154 +184,14 @@ class SupabaseVectorStore:
         if file_edges is not None:
             payload["file_edges"] = file_edges
 
-        res = self._update_repository(repo_id, payload, expected_run_id)
+        self._repo_cache.pop(repo_id, None)
+        query = self.client.table("repositories").update(payload).eq("id", repo_id)
+        if expected_run_id is not None:
+            query = query.eq("active_run_id", expected_run_id)
+        res = query.execute()
         if expected_run_id is not None:
             return bool(res.data)
         return True
-
-    def _update_repository(
-        self,
-        repo_id: str,
-        payload: dict[str, Any],
-        expected_run_id: str | None = None,
-    ):
-        """Runs the repository update, tolerating schemas that predate the metadata columns."""
-        optional = {"file_hashes", "pipeline_version", "file_edges"}
-
-        def _apply(body: dict[str, Any]):
-            query = self.client.table("repositories").update(body).eq("id", repo_id)
-            if expected_run_id is not None:
-                query = query.eq("active_run_id", expected_run_id)
-            return query.execute()
-
-        try:
-            return _apply(payload)
-        except Exception as exc:
-            if optional & set(payload) and any(col in str(exc) for col in optional):
-                return _apply({key: value for key, value in payload.items() if key not in optional})
-            raise
-
-    def delete_chunks_for_files(
-        self,
-        repo_id: str,
-        run_id: str,
-        file_paths: list[str],
-        batch_size: int = 200,
-    ) -> None:
-        """Deletes chunks belonging to specific changed or deleted files within an active run."""
-        paths = [path for path in dict.fromkeys(file_paths) if path]
-        if not paths:
-            return
-
-        for start in range(0, len(paths), batch_size):
-            batch = paths[start : start + batch_size]
-            (
-                self.client.table("code_chunks")
-                .delete()
-                .eq("repo_id", repo_id)
-                .eq("run_id", run_id)
-                .in_("file_path", batch)
-                .execute()
-            )
-
-    def copy_chunks_to_run(
-        self,
-        repo_id: str,
-        source_run_id: str,
-        target_run_id: str,
-        file_paths: list[str],
-        batch_size: int = 500,
-    ) -> int:
-        """Copies unchanged files' chunks (embeddings included) into the staging run, in SQL.
-
-        This is what makes the incremental path both atomic and cheap: no API calls, no row of
-        the live run touched, and the single `active_run_id` update is the only visible change.
-        """
-        paths = [path for path in dict.fromkeys(file_paths) if path]
-        if not paths:
-            return 0
-
-        copied = 0
-        for start in range(0, len(paths), batch_size):
-            batch = paths[start : start + batch_size]
-            try:
-                res = self.client.rpc(
-                    "copy_chunks_to_run",
-                    {
-                        "p_repo_id": repo_id,
-                        "p_source_run": source_run_id,
-                        "p_target_run": target_run_id,
-                        "p_file_paths": batch,
-                    },
-                ).execute()
-                copied += self._rpc_count(res.data)
-            except Exception as rpc_err:
-                err_str = str(rpc_err)
-                if "copy_chunks_to_run" in err_str or "PGRST202" in err_str:
-                    copied += self._fallback_copy_chunks(repo_id, source_run_id, target_run_id, batch)
-                else:
-                    raise
-        return copied
-
-    def _fallback_copy_chunks(
-        self,
-        repo_id: str,
-        source_run_id: str,
-        target_run_id: str,
-        file_paths: list[str],
-    ) -> int:
-        """Client-side fallback chunk copy when the SQL RPC copy_chunks_to_run is not installed."""
-        total_copied = 0
-        cols = (
-            "file_path, content, start_line, end_line, node_type, "
-            "parent_class, symbol_name, imports, imported_by, calls, "
-            "called_by, inherits_from, search_text, search_terms, embedding"
-        )
-        chunk_batch_size = 50
-        for i in range(0, len(file_paths), chunk_batch_size):
-            sub_paths = file_paths[i : i + chunk_batch_size]
-            res = (
-                self.client.table("code_chunks")
-                .select(cols)
-                .eq("repo_id", repo_id)
-                .eq("run_id", source_run_id)
-                .in_("file_path", sub_paths)
-                .execute()
-            )
-            rows = res.data or []
-            if not rows:
-                continue
-            to_insert = []
-            for row in rows:
-                row_copy = dict(row)
-                row_copy["repo_id"] = repo_id
-                row_copy["run_id"] = target_run_id
-                to_insert.append(row_copy)
-            for j in range(0, len(to_insert), self.batch_size):
-                insert_batch = to_insert[j : j + self.batch_size]
-                self.client.table("code_chunks").insert(insert_batch).execute()
-            total_copied += len(rows)
-        return total_copied
-
-    @staticmethod
-    def _rpc_count(data: Any) -> int:
-        """Reads a scalar count from an RPC response across PostgREST return shapes."""
-        if data is None or isinstance(data, bool):
-            return 0
-        if isinstance(data, (int, float)):
-            return int(data)
-        if isinstance(data, str):
-            try:
-                return int(data)
-            except ValueError:
-                return 0
-        if isinstance(data, list) and data:
-            first = data[0]
-            if isinstance(first, (int, float)):
-                return int(first)
-            if isinstance(first, dict):
-                return int(first.get("copy_chunks_to_run") or first.get("count") or 0)
-        return 0
 
     def _delete_stale_runs(self, repo_id: str, keep_run_id: str) -> None:
         self.client.table("code_chunks").delete().eq("repo_id", repo_id).neq("run_id", keep_run_id).execute()
@@ -346,57 +206,102 @@ class SupabaseVectorStore:
         """Returns normalized terms, preserving repetitions required by BM25 term frequency."""
         return _BM25_TERM_RE.findall(text.lower())
 
+    def _chunk_row(self, item: EmbeddedChunk) -> dict[str, Any]:
+        """Serializes one embedded chunk into a `code_chunks` row (without repo_id/run_id)."""
+        search_text = build_search_text(item.chunk)
+        return {
+            "file_path": item.chunk.file_path,
+            "content": item.chunk.content,
+            "start_line": item.chunk.start_line,
+            "end_line": item.chunk.end_line,
+            "node_type": item.chunk.node_type,
+            "parent_class": item.chunk.parent_class,
+            "symbol_name": item.chunk.symbol_name,
+            "imports": item.chunk.imports,
+            "imported_by": item.chunk.imported_by,
+            "calls": item.chunk.calls,
+            "called_by": item.chunk.called_by,
+            "inherits_from": item.chunk.inherits_from,
+            "search_text": search_text,
+            "search_terms": self._bm25_terms(search_text),
+            "embedding": item.embedding,
+        }
+
+    @staticmethod
+    def _check_dimensions(batch: list[EmbeddedChunk], expected: int) -> None:
+        for item in batch:
+            if len(item.embedding) != expected:
+                raise ValueError(
+                    f"Embedding dimension mismatch: got {len(item.embedding)}, "
+                    f"expected {expected} (check schema vector size)."
+                )
+
     def insert_chunks(self, repo_id: str, run_id: str, embedded_chunks: list[EmbeddedChunk]) -> int:
-        """Inserts embedded code chunks for a specific run in batches."""
+        """Inserts embedded code chunks for a specific run in batches of `SUPABASE_BATCH_SIZE`."""
         if not embedded_chunks:
             return 0
 
-        rows = []
-        for item in embedded_chunks:
-            search_text = build_search_text(item.chunk)
-            rows.append(
-                {
-                "repo_id": repo_id,
-                "run_id": run_id,
-                "file_path": item.chunk.file_path,
-                "content": item.chunk.content,
-                "start_line": item.chunk.start_line,
-                "end_line": item.chunk.end_line,
-                "node_type": item.chunk.node_type,
-                "parent_class": item.chunk.parent_class,
-                "symbol_name": item.chunk.symbol_name,
-                "imports": item.chunk.imports,
-                "imported_by": item.chunk.imported_by,
-                "calls": item.chunk.calls,
-                "called_by": item.chunk.called_by,
-                "inherits_from": item.chunk.inherits_from,
-                "search_text": search_text,
-                "search_terms": self._bm25_terms(search_text),
-                "embedding": item.embedding,
-            }
-            )
-
-        inserted = 0
-        include_dep_cols = True
+        rows = [{"repo_id": repo_id, "run_id": run_id, **self._chunk_row(item)} for item in embedded_chunks]
         for start in range(0, len(rows), self.batch_size):
-            batch = rows[start : start + self.batch_size]
-            payload = (
-                batch
-                if include_dep_cols
-                else [{k: v for k, v in r.items() if k not in _DEP_COLUMNS} for r in batch]
-            )
-            try:
-                self.client.table("code_chunks").insert(payload).execute()
-            except Exception as exc:
-                err_msg = str(exc)
-                if include_dep_cols and any(col in err_msg for col in _DEP_COLUMNS):
-                    include_dep_cols = False
-                    fallback_payload = [{k: v for k, v in r.items() if k not in _DEP_COLUMNS} for r in batch]
-                    self.client.table("code_chunks").insert(fallback_payload).execute()
-                else:
-                    raise
-            inserted += len(batch)
-        return inserted
+            self.client.table("code_chunks").insert(rows[start : start + self.batch_size]).execute()
+        return len(rows)
+
+    def _replace_file_group(
+        self,
+        repo_id: str,
+        run_id: str,
+        embedder: NvidiaEmbedder,
+        file_paths: list[str],
+        chunks: list[CodeChunk],
+    ) -> int:
+        """Embeds one small group of files, then swaps their rows in a single transaction."""
+        rows: list[dict[str, Any]] = []
+        if chunks:
+            for batch in embedder.iter_embedded_chunks(chunks):
+                self._check_dimensions(batch, embedder.dimensions)
+                rows.extend(self._chunk_row(item) for item in batch)
+
+        self.client.rpc(
+            "replace_file_chunks",
+            {
+                "p_repo_id": repo_id,
+                "p_run_id": run_id,
+                "p_file_paths": file_paths,
+                "p_rows": rows,
+            },
+        ).execute()
+        return len(rows)
+
+    def _replace_changed_files(
+        self,
+        repo_id: str,
+        run_id: str,
+        embedder: NvidiaEmbedder,
+        paths_to_replace: list[str],
+        chunks_by_file: dict[str, list[CodeChunk]],
+    ) -> int:
+        """Streams changed/deleted files through `_replace_file_group` in bounded groups.
+
+        Peak RAM is one group (~2 embedding batches) regardless of how large the diff is.
+        Each group is atomic, so a reader never sees a file with zero chunks. The manifest is
+        written only after every group succeeds, so if the job dies midway the next sync
+        re-processes those files, and re-running the swap is idempotent.
+        """
+        group_limit = max(1, embedder.batch_size * _REPLACE_GROUP_EMBED_BATCHES)
+        total = 0
+        group_paths: list[str] = []
+        group_chunks: list[CodeChunk] = []
+
+        for file_path in paths_to_replace:
+            group_paths.append(file_path)
+            group_chunks.extend(chunks_by_file.get(file_path, []))
+            if len(group_chunks) >= group_limit:
+                total += self._replace_file_group(repo_id, run_id, embedder, group_paths, group_chunks)
+                group_paths, group_chunks = [], []
+
+        if group_paths:
+            total += self._replace_file_group(repo_id, run_id, embedder, group_paths, group_chunks)
+        return total
 
     def index_chunks(
         self,
@@ -420,8 +325,6 @@ class SupabaseVectorStore:
         existing_repo = self.get_repository(repo_id) if new_hashes else None
         active_run_id = str((existing_repo or {}).get("active_run_id") or "")
         old_hashes = (existing_repo or {}).get("file_hashes")
-        if new_hashes and active_run_id and (not isinstance(old_hashes, dict) or not old_hashes):
-            old_hashes = self._backfill_hashes_from_active_run(repo_id, active_run_id, chunks, new_hashes)
 
         # Incremental reuse is only valid if the existing rows were produced by the same chunker,
         # header format, dependency extractor, and embedding model. Without this check, editing
@@ -443,7 +346,6 @@ class SupabaseVectorStore:
 
             # Fast path: zero files added, modified, or deleted -> zero embedding calls
             if not changed_files and not deleted_files:
-                self._save_cached_hashes(repo_id, new_hashes)
                 self.last_sync_stats = {
                     "mode": "noop",
                     "changed_files": 0,
@@ -459,6 +361,8 @@ class SupabaseVectorStore:
                 analyzer = dependency_analyzer or DependencyAnalyzer()
                 if all_chunks:
                     analyzer.analyze(all_chunks, files=files)
+                for f in files or []:
+                    f.content = ""
 
                 # Imports and callers are derived by parsing every file, so a rename in one file
                 # invalidates metadata of files whose own bytes did not change. Signature
@@ -473,7 +377,7 @@ class SupabaseVectorStore:
                 ]
 
                 changed_set = set(changed_files) | set(edge_changed)
-                files_to_delete = sorted(changed_set | set(deleted_files))
+                paths_to_replace = sorted(changed_set | set(deleted_files))
 
                 repo_summary = ""
                 if include_summaries and all_chunks:
