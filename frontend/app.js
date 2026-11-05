@@ -91,6 +91,11 @@ async function newConversation() {
   try { const data = await api(`/api/repos/${encodeURIComponent(state.activeRepoId)}/conversations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: "New chat" }) }); await loadConversations(); await loadConversation(data.conversation.id); }
   catch (err) { els.ingestStatus.textContent = `✗ ${err.message}`; }
 }
+function renderChunksDrawer(chunks) {
+  if (!chunks || !chunks.length) return "";
+  const cards = chunks.map((chunk, index) => `<div class="chunk-card"><div class="chunk-card-header"><span>#${index + 1} ${escapeHtml(chunk.file_path)}:L${chunk.start_line}-L${chunk.end_line}</span></div><pre>${escapeHtml(chunk.content)}</pre></div>`).join("");
+  return `<details class="chunks-drawer"><summary>Inspect Retrieved Chunks (${chunks.length})</summary>${cards}</details>`;
+}
 function appendAssistantResponse(data) {
   const div = document.createElement("div"); div.className = "msg assistant";
   const chunks = (data.chunks || []).map((chunk, index) => `<div class="chunk-card"><div class="chunk-card-header"><span>#${index + 1} ${escapeHtml(chunk.file_path)}:L${chunk.start_line}-L${chunk.end_line}</span></div><pre>${escapeHtml(chunk.content)}</pre></div>`).join("");
