@@ -6,7 +6,7 @@ from ingestion.vector_store import shared_supabase_client
 
 ACTIVE_STATUSES = ("queued", "running")
 TERMINAL_STATUSES = ("succeeded", "failed")
-DEFAULT_LEASE_SECONDS = 900
+DEFAULT_LEASE_SECONDS = settings.INDEX_JOB_LEASE_SECONDS
 MAX_ATTEMPTS = 2
 
 _JOB_COLUMNS = (
@@ -36,11 +36,7 @@ class IndexJobStore:
             self.client = client
             return
 
-        supabase_url = url if url is not None else settings.SUPABASE_URL
-        supabase_key = key if key is not None else settings.SUPABASE_KEY
-        if not supabase_url or not supabase_key:
-            raise ValueError("SUPABASE_URL and SUPABASE_KEY are required. Set them in your .env file.")
-        self.client = create_client(supabase_url, supabase_key)
+        self.client = shared_supabase_client(url=url, key=key)
 
     # ---------- enqueue / read ----------
 
