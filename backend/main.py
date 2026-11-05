@@ -1,13 +1,13 @@
 import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 import uuid
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
@@ -29,12 +29,7 @@ from retrieval.retriever import CodebaseRetriever
 FRONTEND_DIR = ROOT_DIR / "frontend"
 LOCAL_REPO_URL = "https://github.com/local/codebase-copilot"
 _SYNC_LOCKS: dict[str, asyncio.Lock] = {}
-_MEMORY_JOBS: dict[str, dict[str, Any]] = {}
 _WORKER_ID = f"worker-{uuid.uuid4().hex[:8]}"
-
-
-def _utc_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _execute_ingest(raw_url: str, branch: str | None = None, llm_summaries: bool = False) -> dict[str, Any]:
@@ -85,8 +80,18 @@ def _execute_ingest(raw_url: str, branch: str | None = None, llm_summaries: bool
     }
 
 
-async def _run_job_record(job: dict[str, Any], job_store: IndexJobStore | None = None) -> None:
-    """Executes an indexing job under the per-repository lock and updates its status."""
+async def _heartbeat_loop(job_store: IndexJobStore, job_id: str) -> None:
+    """Periodically extends the job lease while an indexing job is actively running."""
+    while True:
+        await asyncio.sleep(settings.INDEX_JOB_HEARTBEAT_SECONDS)
+        try:
+            await asyncio.to_thread(job_store.heartbeat, job_id, settings.INDEX_JOB_LEASE_SECONDS)
+        except Exception:
+            pass
+
+
+async def _run_job_record(job: dict[str, Any], job_store: IndexJobStore) -> None:
+    """Executes a claimed indexing job with periodic lease heartbeats and updates its terminal status."""
     job_id = str(job.get("id") or job.get("job_id") or "")
     repo_url = str(job.get("repo_url") or "")
     branch = str(job.get("branch") or "main")
@@ -94,11 +99,7 @@ async def _run_job_record(job: dict[str, Any], job_store: IndexJobStore | None =
     lock_key = LOCAL_REPO_URL if repo_url.lower() == "local" else repo_url.rstrip("/")
     lock = _SYNC_LOCKS.setdefault(lock_key, asyncio.Lock())
 
-    if job_id in _MEMORY_JOBS:
-        _MEMORY_JOBS[job_id]["status"] = "running"
-        _MEMORY_JOBS[job_id]["started_at"] = _utc_iso()
-        _MEMORY_JOBS[job_id]["attempt"] = int(_MEMORY_JOBS[job_id].get("attempt") or 0) + 1
-
+    heartbeat_task = asyncio.create_task(_heartbeat_loop(job_store, job_id))
     try:
         async with lock:
             stats = await asyncio.to_thread(_execute_ingest, repo_url, branch, llm_summaries)
