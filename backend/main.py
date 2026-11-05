@@ -166,10 +166,15 @@ async def _background_local_sync_loop() -> None:
             files = await asyncio.to_thread(load_repository_files, BACKEND_DIR)
             new_hashes = build_file_manifest(files)
             if new_hashes != old_hashes:
-                lock = _SYNC_LOCKS.setdefault(LOCAL_REPO_URL, asyncio.Lock())
-                if not lock.locked():
-                    async with lock:
-                        await asyncio.to_thread(_execute_ingest, "local", local_repo.get("branch") or "main", False)
+                job_store = IndexJobStore()
+                await asyncio.to_thread(
+                    job_store.enqueue,
+                    repo_id,
+                    LOCAL_REPO_URL,
+                    str(local_repo.get("branch") or "main"),
+                    "incremental",
+                    False,
+                )
         except Exception:
             pass
 
@@ -362,10 +367,12 @@ async def reindex_repository(
             async with lock:
                 return await asyncio.to_thread(_execute_ingest, repo_url, branch, False)
 
-        job, used_db = await asyncio.to_thread(_enqueue_reindex_job, repo_id, repo_url, branch, "incremental", False)
-        if not used_db and job["status"] == "queued":
-            background_tasks.add_task(_run_job_record, _MEMORY_JOBS[job["job_id"]], None)
-        return job
+        job_store = IndexJobStore()
+        row = await asyncio.to_thread(
+            job_store.enqueue, repo_id, repo_url, branch, "incremental", False
+        )
+        background_tasks.add_task(_claim_and_run_once)
+        return public_job(row)
     except HTTPException:
         raise
     except Exception as exc:
@@ -387,10 +394,12 @@ async def sync_repository_async(
         repo_url = str(repo["repo_url"])
         branch = str(repo.get("branch") or "main")
 
-        job, used_db = await asyncio.to_thread(_enqueue_reindex_job, repo_id, repo_url, branch, "incremental", False)
-        if not used_db and job["status"] == "queued":
-            background_tasks.add_task(_run_job_record, _MEMORY_JOBS[job["job_id"]], None)
-        return job
+        job_store = IndexJobStore()
+        row = await asyncio.to_thread(
+            job_store.enqueue, repo_id, repo_url, branch, "incremental", False
+        )
+        background_tasks.add_task(_claim_and_run_once)
+        return public_job(row)
     except HTTPException:
         raise
     except Exception as exc:
@@ -400,8 +409,6 @@ async def sync_repository_async(
 @app.get("/api/jobs/{job_id}")
 def get_index_job(job_id: str) -> dict[str, Any]:
     """Returns the current status and stats of a background indexing job."""
-    if job_id in _MEMORY_JOBS:
-        return {"job": public_job(_MEMORY_JOBS[job_id])}
     try:
         job_store = IndexJobStore()
         row = job_store.get(job_id)
@@ -421,13 +428,30 @@ def list_repo_index_jobs(repo_id: str, limit: int = Query(default=10, ge=1, le=5
         job_store = IndexJobStore()
         rows = job_store.list_for_repo(repo_id, limit=limit)
         return {"jobs": [public_job(r) for r in rows]}
-    except Exception:
-        mem = [
-            public_job(r)
-            for r in sorted(_MEMORY_JOBS.values(), key=lambda x: str(x.get("requested_at") or ""), reverse=True)
-            if r.get("repo_id") == repo_id
-        ]
-        return {"jobs": mem[:limit]}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _format_retrieved_chunks(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": c.get("id"),
+            "file_path": c.get("file_path"),
+            "start_line": c.get("start_line"),
+            "end_line": c.get("end_line"),
+            "node_type": c.get("node_type"),
+            "parent_class": c.get("parent_class", ""),
+            "symbol_name": c.get("symbol_name", ""),
+            "similarity": round(float(c.get("similarity") or 0.0), 4),
+            "rrf_score": round(float(c.get("rrf_score") or 0.0), 4),
+            "fts_rank": round(float(c.get("fts_rank") or 0.0), 4),
+            "rerank_score": round(float(c.get("rerank_score") or 0.0), 4),
+            "is_context_expansion": bool(c.get("is_context_expansion", False)),
+            "is_dependency_neighbor": bool(c.get("is_dependency_neighbor", False)),
+            "content": c.get("content", ""),
+        }
+        for c in chunks
+    ]
 
 
 @app.post("/api/chat")
@@ -455,26 +479,6 @@ def chat_with_repo(req: ChatRequest) -> dict[str, Any]:
             conversation_id=conv_id,
         )
 
-        formatted_chunks = [
-            {
-                "id": c.get("id"),
-                "file_path": c.get("file_path"),
-                "start_line": c.get("start_line"),
-                "end_line": c.get("end_line"),
-                "node_type": c.get("node_type"),
-                "parent_class": c.get("parent_class", ""),
-                "symbol_name": c.get("symbol_name", ""),
-                "similarity": round(float(c.get("similarity") or 0.0), 4),
-                "rrf_score": round(float(c.get("rrf_score") or 0.0), 4),
-                "fts_rank": round(float(c.get("fts_rank") or 0.0), 4),
-                "rerank_score": round(float(c.get("rerank_score") or 0.0), 4),
-                "is_context_expansion": bool(c.get("is_context_expansion", False)),
-                "is_dependency_neighbor": bool(c.get("is_dependency_neighbor", False)),
-                "content": c.get("content", ""),
-            }
-            for c in turn.retrieval.chunks
-        ]
-
         return {
             "answer": turn.answer,
             "original_query": turn.plan.original_query,
@@ -484,12 +488,61 @@ def chat_with_repo(req: ChatRequest) -> dict[str, Any]:
             "target_file": turn.plan.target_file,
             "conversation_id": turn.conversation_id,
             "cited_chunk_ids": turn.cited_chunk_ids,
-            "chunks": formatted_chunks,
+            "chunks": _format_retrieved_chunks(turn.retrieval.chunks),
+            "timings_ms": turn.timings_ms,
         }
     except (QueryRewriteError, RerankerServiceError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/chat/stream")
+def chat_with_repo_stream(req: ChatRequest) -> StreamingResponse:
+    """Streams retrieved chunks and LLM answer tokens via Server-Sent Events (SSE)."""
+    if not req.message or not req.message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty.")
+
+    store = SupabaseVectorStore()
+    embedder = NvidiaEmbedder()
+    llm = NvidiaChatClient()
+    retriever = CodebaseRetriever(vector_store=store, embedder=embedder, llm_client=llm)
+    engine = ConversationalRAGEngine(retriever=retriever, llm_client=llm, vector_store=store)
+
+    conv_id = req.conversation_id
+    if not conv_id and req.repo_id:
+        try:
+            conv_id = store.create_conversation(repo_id=req.repo_id, title=req.message[:80])
+        except Exception:
+            conv_id = None
+
+    def _event_generator() -> Iterator[str]:
+        try:
+            for event in engine.ask_stream(
+                user_message=req.message,
+                repo_id=req.repo_id,
+                conversation_id=conv_id,
+            ):
+                if event["type"] == "metadata":
+                    plan = event["plan"]
+                    retrieval = event["retrieval"]
+                    payload = {
+                        "type": "metadata",
+                        "conversation_id": event["conversation_id"],
+                        "original_query": plan.original_query,
+                        "standalone_query": plan.standalone_query,
+                        "needs_retrieval": plan.needs_retrieval,
+                        "target_symbol": plan.target_symbol,
+                        "target_file": plan.target_file,
+                        "chunks": _format_retrieved_chunks(retrieval.chunks),
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
+                else:
+                    yield f"data: {json.dumps(event)}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'type': 'error', 'detail': str(exc)})}\n\n"
+
+    return StreamingResponse(_event_generator(), media_type="text/event-stream")
 
 
 FRONTEND_DIR.mkdir(parents=True, exist_ok=True)
