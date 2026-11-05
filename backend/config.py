@@ -41,8 +41,9 @@ class Settings(BaseSettings):
     INDEX_JOB_POLL_SECONDS: float = 2.0      # Idle poll interval for the job worker
 
     # Ingestion limits
-    MAX_FILE_SIZE_BYTES: int = 500_000  # 500 KB per file limit
-    MAX_TOTAL_FILES: int = 2_000        # Safety cap for huge repos
+    MAX_FILE_SIZE_BYTES: int = 500_000       # 500 KB per file limit
+    MAX_TOTAL_FILES: int = 2_000             # Safety cap for huge repos
+    MAX_TOTAL_BYTES: int = 50_000_000        # 50 MB total source cap to stay well under 512 MB RAM
 
     # File / directory filters
     IGNORED_DIRS: set[str] = {
