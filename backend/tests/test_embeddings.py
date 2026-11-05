@@ -136,6 +136,27 @@ class TestNvidiaEmbedder(unittest.TestCase):
         limiter.wait()  # enough time passed: immediate
         self.assertEqual(sleeps, [2.0])
 
+    def test_rate_limiter_reserves_headroom_for_interactive_traffic(self) -> None:
+        now = [100.0]
+        sleeps: list[float] = []
+
+        def fake_sleep(s: float) -> None:
+            sleeps.append(round(s, 2))
+            now[0] += s
+
+        # 40 total RPM, 10 reserved for interactive => background capped at 30 RPM (2.0s spacing),
+        # while interactive uses full 40 RPM (1.5s spacing).
+        limiter = RateLimiter(
+            requests_per_minute=40,
+            reserved_interactive_rpm=10,
+            clock=lambda: now[0],
+            sleep=fake_sleep,
+        )
+        limiter.wait(priority="background")  # immediate at t=100.0
+        limiter.wait(priority="background")  # waits 2.0s -> t=102.0
+        limiter.wait(priority="interactive")  # waits 1.5s -> t=103.5
+        self.assertEqual(sleeps, [2.0, 1.5])
+
 
 class TestSupabaseVectorStore(unittest.TestCase):
     def setUp(self) -> None:
