@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -5,7 +6,7 @@ import re
 from typing import Any
 import uuid
 from supabase import Client, create_client
-from config import BACKEND_DIR, settings
+from config import settings
 from ingestion.chunker import (
     CHUNKER_VERSION,
     HEADER_FORMAT_VERSION,
@@ -20,9 +21,24 @@ from ingestion.embedder import EmbeddedChunk, NvidiaEmbedder
 from ingestion.loader import LoadedFile, build_file_manifest
 from ingestion.summarizer import RepoSummarizer
 
-_DEP_COLUMNS = ("imports", "imported_by", "calls", "called_by", "inherits_from")
 _BM25_TERM_RE = re.compile(r"[a-z0-9_]{2,}")
-_HASH_CACHE_PATH = BACKEND_DIR / ".repo_file_hashes.json"
+# Incremental sync swaps changed files in groups of ~this many embedding batches.
+_REPLACE_GROUP_EMBED_BATCHES = 2
+_SHARED_CLIENTS: dict[tuple[str, str], Client] = {}
+
+
+def shared_supabase_client(url: str | None = None, key: str | None = None) -> Client:
+    """Returns a cached Supabase client so requests reuse the underlying HTTP connection pool."""
+    supabase_url = url if url is not None else settings.SUPABASE_URL
+    supabase_key = key if key is not None else settings.SUPABASE_KEY
+    if not supabase_url or not supabase_key:
+        raise ValueError("SUPABASE_URL and SUPABASE_KEY are required. Set them in your .env file.")
+    cache_key = (supabase_url, supabase_key)
+    client = _SHARED_CLIENTS.get(cache_key)
+    if client is None:
+        client = create_client(supabase_url, supabase_key)
+        _SHARED_CLIENTS[cache_key] = client
+    return client
 
 
 class SupabaseVectorStore:
@@ -37,91 +53,13 @@ class SupabaseVectorStore:
     ) -> None:
         self.batch_size = batch_size or settings.SUPABASE_BATCH_SIZE
         self.last_sync_stats: dict[str, int] = {}
-        self._use_disk_hash_cache = client is None
+        self._repo_cache: dict[str, dict[str, Any]] = {}
 
         if client is not None:
             self.client = client
             return
 
-        supabase_url = url if url is not None else settings.SUPABASE_URL
-        supabase_key = key if key is not None else settings.SUPABASE_KEY
-        if not supabase_url or not supabase_key:
-            raise ValueError("SUPABASE_URL and SUPABASE_KEY are required. Set them in your .env file.")
-
-        self.client = create_client(supabase_url, supabase_key)
-
-    def _load_cached_hashes(self, repo_id: str) -> dict[str, str]:
-        if not self._use_disk_hash_cache or not _HASH_CACHE_PATH.exists():
-            return {}
-        try:
-            data = json.loads(_HASH_CACHE_PATH.read_text(encoding="utf-8"))
-            entry = data.get(repo_id)
-            return entry if isinstance(entry, dict) else {}
-        except Exception:
-            return {}
-
-    def _save_cached_hashes(self, repo_id: str, file_hashes: dict[str, str]) -> None:
-        if not self._use_disk_hash_cache:
-            return
-        try:
-            data: dict[str, Any] = {}
-            if _HASH_CACHE_PATH.exists():
-                data = json.loads(_HASH_CACHE_PATH.read_text(encoding="utf-8"))
-            data[repo_id] = file_hashes
-            _HASH_CACHE_PATH.write_text(json.dumps(data), encoding="utf-8")
-        except Exception:
-            pass
-
-    def _backfill_hashes_from_active_run(
-        self,
-        repo_id: str,
-        active_run_id: str,
-        chunks: list[CodeChunk],
-        new_hashes: dict[str, str],
-    ) -> dict[str, str]:
-        """Infers unchanged file hashes when an existing run predates the `file_hashes` column."""
-        if not self._use_disk_hash_cache or not active_run_id or not chunks:
-            return {}
-        try:
-            res = (
-                self.client.table("code_chunks")
-                .select("file_path,node_type,start_line,end_line,content")
-                .eq("repo_id", repo_id)
-                .eq("run_id", active_run_id)
-                .neq("node_type", "file_summary")
-                .execute()
-            )
-            existing_rows = list(res.data or [])
-            if not existing_rows:
-                return {}
-
-            db_by_file: dict[str, set[tuple[str, int, int, str]]] = {}
-            for row in existing_rows:
-                fp = str(row.get("file_path") or "")
-                sig = (
-                    str(row.get("node_type") or ""),
-                    int(row.get("start_line") or 0),
-                    int(row.get("end_line") or 0),
-                    str(row.get("content") or ""),
-                )
-                db_by_file.setdefault(fp, set()).add(sig)
-
-            local_by_file: dict[str, set[tuple[str, int, int, str]]] = {}
-            for chunk in chunks:
-                if chunk.node_type == "file_summary":
-                    continue
-                sig = (chunk.node_type, chunk.start_line, chunk.end_line, chunk.content)
-                local_by_file.setdefault(chunk.file_path, set()).add(sig)
-
-            inferred: dict[str, str] = {}
-            for fp, db_sigs in db_by_file.items():
-                if fp in new_hashes and local_by_file.get(fp) == db_sigs:
-                    inferred[fp] = new_hashes[fp]
-                else:
-                    inferred[fp] = "__stale__"
-            return inferred
-        except Exception:
-            return {}
+        self.client = shared_supabase_client(url=url, key=key)
 
     # ---------- repository bookkeeping ----------
 
@@ -149,15 +87,14 @@ class SupabaseVectorStore:
 
     def get_repository(self, repo_id: str) -> dict[str, Any] | None:
         """Fetches repository metadata including active_run_id and repo_summary."""
+        if repo_id in self._repo_cache:
+            return dict(self._repo_cache[repo_id])
         res = self.client.table("repositories").select("*").eq("id", repo_id).execute()
         if not res.data:
             return None
         row = dict(res.data[0])
-        if not row.get("file_hashes"):
-            cached = self._load_cached_hashes(repo_id)
-            if cached:
-                row["file_hashes"] = cached
-        return row
+        self._repo_cache[repo_id] = row
+        return dict(row)
 
     @staticmethod
     def pipeline_version(embed_model: str, embedding_dim: int) -> str:
@@ -231,9 +168,6 @@ class SupabaseVectorStore:
         repository still points at the run this job diffed against. A slow job can therefore
         never publish an index built on stale input over a newer one.
         """
-        if file_hashes is not None:
-            self._save_cached_hashes(repo_id, file_hashes)
-
         payload: dict[str, Any] = {
             "active_run_id": run_id,
             "chunk_count": chunk_count,
