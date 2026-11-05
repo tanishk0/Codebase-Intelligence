@@ -145,12 +145,84 @@ class NvidiaChatClient:
 
         raise LLMError("Unreachable: retry loop exited without result")  # pragma: no cover
 
+    def stream(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        use_fast_model: bool = False,
+        model: str | None = None,
+        temperature: float = 0.1,
+        max_tokens: int = 1200,
+    ) -> Iterator[str]:
+        """Streams token deltas from NVIDIA NIM via SSE, filtering `<think>...</think>` blocks."""
+        chosen_model = model or (self.fast_model if use_fast_model else self.chat_model)
+        url = f"{self.base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        }
+        payload = {
+            "model": chosen_model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+
+        self.rate_limiter.wait("interactive")
+        in_think = False
+        buffer = ""
+
+        with httpx.Client(timeout=self.timeout) as client:
+            with client.stream("POST", url, headers=headers, json=payload) as response:
+                if response.status_code >= 400:
+                    body = response.read().decode("utf-8", errors="ignore")
+                    raise LLMError(
+                        f"Chat stream returned {response.status_code} for model '{chosen_model}': {body[:200]}"
+                    )
+                for raw_line in response.iter_lines():
+                    line = raw_line.strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(data_str)
+                        choices = event.get("choices") or []
+                        if not choices:
+                            continue
+                        delta = choices[0].get("delta") or {}
+                        token = delta.get("content") or ""
+                    except Exception:
+                        continue
+                    if not token:
+                        continue
+
+                    buffer += token
+                    if "<think>" in buffer.lower():
+                        in_think = True
+                    if in_think:
+                        end_idx = buffer.lower().find("</think>")
+                        if end_idx != -1:
+                            in_think = False
+                            after = buffer[end_idx + len("</think>") :].lstrip()
+                            buffer = ""
+                            if after:
+                                yield after
+                        continue
+
+                    yield buffer
+                    buffer = ""
+
     def complete_json(
         self,
         messages: list[dict[str, str]],
         *,
         use_fast_model: bool = True,
         max_tokens: int = 512,
+        priority: Literal["interactive", "background"] = "interactive",
     ) -> dict[str, Any]:
         """Runs a completion and parses the JSON object response."""
         raw = self.complete(
@@ -158,6 +230,7 @@ class NvidiaChatClient:
             use_fast_model=use_fast_model,
             temperature=0.0,
             max_tokens=max_tokens,
+            priority=priority,
         )
         return extract_json_object(raw)
 
