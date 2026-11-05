@@ -142,6 +142,20 @@ async function sendChatMessage(message) {
             if (evt.conversation_id) state.conversationId = evt.conversation_id;
             fullAnswer = evt.answer || fullAnswer;
             assistantDiv.innerHTML = `<div class="msg-content">${renderMarkdownLite(fullAnswer)}</div>${renderChunksDrawer(retrievedChunks)}`;
+          }
+        }
+      }
+    }
+    await refreshActivePageState(); await loadConversations(); renderConversations();
+  } catch (err) { contentEl.textContent = `Error: ${err.message}`; }
+  finally { els.sendBtn.disabled = false; els.chatInput.disabled = false; els.chatInput.focus(); }
+}
+function formatSyncMessage(data) {
+  if (typeof data.unchanged_files === "number" && data.unchanged_files > 0) {
+    if ((data.changed_files || 0) === 0 && (data.deleted_files || 0) === 0) {
+      return `✓ Up to date: ${data.unchanged_files} files unchanged (0 chunks re-embedded).`;
+    }
+    return `✓ Synced: ${data.changed_files || 0} changed, ${data.unchanged_files} unchanged (${data.embedded_chunks || 0} chunks re-embedded).`;
   }
   return `✓ Indexed ${data.file_count} files (${data.total_indexed_chunks} chunks).`;
 }
