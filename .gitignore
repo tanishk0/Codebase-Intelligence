@@ -13,11 +13,22 @@ env/
 .env
 .env.local
 *.env
+!.env.example
 
 # Distribution / packaging
 build/
 dist/
 *.egg-info/
+
+# Root-level legacy / scratch directories and files
+/.python-version
+/pyproject.toml
+/uv.lock
+/README.md
+/app/
+/src/
+/tests/
+/.freebuff/
 
 # IDE & editors
 .vscode/
