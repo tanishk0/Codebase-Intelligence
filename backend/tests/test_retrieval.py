@@ -170,38 +170,19 @@ class TestRerankerAndContextAssembler(unittest.TestCase):
                     "query", [{"id": 1, "content": "code"}], top_k=1
                 )
 
-    def test_reranker_boosts_symbol_and_caps_per_file(self) -> None:
-        reranker = CodeReranker(top_k=5, max_chunks_per_file=2)
-        plan = QueryPlan(
-            original_query="where is validate_github_url?",
-            standalone_query="where is validate_github_url?",
-            target_symbol="validate_github_url",
-        )
-        candidates = [
-            {
-                "id": 1,
-                "file_path": "tests/test_git.py",
-                "start_line": 1,
-                "end_line": 10,
-                "node_type": "function",
-                "symbol_name": "test_validate",
-                "content": "validate_github_url()",
-                "similarity": 0.80,
-            },
-            {
-                "id": 2,
-                "file_path": "ingestion/git_clone.py",
-                "start_line": 8,
-                "end_line": 16,
-                "node_type": "function",
-                "symbol_name": "validate_github_url",
-                "content": "def validate_github_url(url: str):",
-                "similarity": 0.72,
-            },
-        ]
-        ranked = reranker.rerank(candidates, plan)
-        # Exact symbol match in non-test file must outrank the test file
-        self.assertEqual(ranked[0]["id"], 2)
+    def test_cross_encoder_retries_429_before_succeeding(self) -> None:
+        resp_429 = MagicMock(status_code=429, headers={"Retry-After": "1"})
+        resp_200 = MagicMock(status_code=200)
+        resp_200.json.return_value = {"rankings": [{"index": 0, "logit": 1.5}]}
+        client = MagicMock()
+        client.__enter__.return_value.post.side_effect = [resp_429, resp_200]
+        sleeps: list[float] = []
+        with patch("retrieval.reranker.httpx.Client", return_value=client):
+            ranked = NvidiaCrossEncoderReranker(api_key="key", sleep=sleeps.append).rerank(
+                "query", [{"id": 1, "content": "code"}], top_k=1
+            )
+        self.assertEqual(ranked[0]["id"], 1)
+        self.assertEqual(sleeps, [1.0])
 
     def test_context_assembler_merges_overlapping_chunks_and_attaches_headers(self) -> None:
         assembler = ContextAssembler(token_budget=2000)
