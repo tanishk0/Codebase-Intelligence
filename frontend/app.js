@@ -147,10 +147,11 @@ async function reindexActiveRepo() {
   if (!state.activeRepoId) { els.ingestStatus.textContent = "Select a repository to re-index."; return; }
   const repoLabel = state.activeRepoUrl || "repository";
   els.reindexRepoBtn.disabled = true; els.ingestBtn.disabled = true; els.ingestLocalBtn.disabled = true;
-  els.ingestStatus.textContent = `Re-indexing changed files in ${state.activeRepoUrl || "repository"}...`;
+  els.ingestStatus.textContent = `Queueing background re-index for ${repoLabel}...`;
   try {
     const data = await api(`/api/repos/${encodeURIComponent(state.activeRepoId)}/reindex`, { method: "POST" });
-    els.ingestStatus.textContent = formatSyncMessage(data);
+    const stats = data.job_id ? await pollJobUntilDone(data.job_id, repoLabel) : data;
+    els.ingestStatus.textContent = formatSyncMessage(stats);
     await loadRepositories();
     const updated = state.repos.find((repo) => repo.id === state.activeRepoId);
     if (updated) els.activeRepoLabel.textContent = `${updated.repo_url.replace("https://github.com/", "")} (${updated.chunk_count} chunks)`;
