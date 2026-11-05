@@ -10,6 +10,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from ingestion.git_clone import RepoCloner, validate_github_url
 from ingestion.loader import is_safe_path, load_repository_files
+import main as api_main
 
 
 class TestIngestionHelpers(unittest.TestCase):
@@ -80,6 +81,73 @@ class TestIngestionHelpers(unittest.TestCase):
             # Anything reported as a symlink is rejected, even if it points inside
             with patch.object(Path, "is_symlink", return_value=True):
                 self.assertFalse(is_safe_path(inside, root))
+
+
+class TestBackgroundReindexJobFlow(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        api_main._MEMORY_JOBS.clear()
+
+    @patch("main.SupabaseVectorStore")
+    @patch("main.IndexJobStore")
+    async def test_reindex_queues_durable_job_when_db_available(
+        self, mock_job_store_cls: MagicMock, mock_store_cls: MagicMock
+    ) -> None:
+        mock_store_cls.return_value.get_repository.return_value = {
+            "id": "repo-1",
+            "repo_url": "https://github.com/org/repo",
+            "branch": "main",
+        }
+        mock_job_store_cls.return_value.enqueue.return_value = {
+            "id": "job-123",
+            "repo_id": "repo-1",
+            "kind": "incremental",
+            "status": "queued",
+            "repo_url": "https://github.com/org/repo",
+            "branch": "main",
+            "attempt": 0,
+            "stats": {},
+            "error": "",
+        }
+        bg = MagicMock()
+        result = await api_main.reindex_repository("repo-1", background_tasks=bg, wait=False)
+
+        self.assertEqual(result["job_id"], "job-123")
+        self.assertEqual(result["status"], "queued")
+        bg.add_task.assert_not_called()
+
+    @patch("main._execute_ingest")
+    @patch("main.SupabaseVectorStore")
+    @patch("main.IndexJobStore", side_effect=RuntimeError("table missing"))
+    async def test_reindex_falls_back_to_memory_job_and_executes_in_bg(
+        self, _mock_job_store: MagicMock, mock_store_cls: MagicMock, mock_exec: MagicMock
+    ) -> None:
+        mock_store_cls.return_value.get_repository.return_value = {
+            "id": "repo-2",
+            "repo_url": "https://github.com/org/repo2",
+            "branch": "dev",
+        }
+        mock_exec.return_value = {
+            "repo_id": "repo-2",
+            "changed_files": 1,
+            "unchanged_files": 4,
+            "deleted_files": 0,
+            "embedded_chunks": 3,
+        }
+        bg = MagicMock()
+        result = await api_main.reindex_repository("repo-2", background_tasks=bg, wait=False)
+
+        job_id = result["job_id"]
+        self.assertEqual(result["status"], "queued")
+        self.assertEqual(bg.add_task.call_count, 1)
+
+        # Simulate FastAPI running the scheduled background task
+        fn, job_record, store_arg = bg.add_task.call_args.args
+        await fn(job_record, store_arg)
+
+        polled = api_main.get_index_job(job_id)["job"]
+        self.assertEqual(polled["status"], "succeeded")
+        self.assertEqual(polled["stats"]["changed_files"], 1)
+        self.assertEqual(polled["stats"]["embedded_chunks"], 3)
 
 
 if __name__ == "__main__":
