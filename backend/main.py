@@ -1,8 +1,10 @@
 import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+import uuid
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -14,6 +16,7 @@ from config import BACKEND_DIR, ROOT_DIR, settings
 from ingestion.chunker import TreeSitterChunker
 from ingestion.embedder import NvidiaEmbedder
 from ingestion.git_clone import RepoCloner
+from ingestion.jobs import IndexJobStore, public_job
 from ingestion.loader import build_file_manifest, load_repository_files
 from ingestion.summarizer import RepoSummarizer
 from ingestion.vector_store import SupabaseVectorStore
@@ -26,6 +29,12 @@ from retrieval.retriever import CodebaseRetriever
 FRONTEND_DIR = ROOT_DIR / "frontend"
 LOCAL_REPO_URL = "https://github.com/local/codebase-copilot"
 _SYNC_LOCKS: dict[str, asyncio.Lock] = {}
+_MEMORY_JOBS: dict[str, dict[str, Any]] = {}
+_WORKER_ID = f"worker-{uuid.uuid4().hex[:8]}"
+
+
+def _utc_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _execute_ingest(raw_url: str, branch: str | None = None, llm_summaries: bool = False) -> dict[str, Any]:
@@ -76,6 +85,101 @@ def _execute_ingest(raw_url: str, branch: str | None = None, llm_summaries: bool
     }
 
 
+async def _run_job_record(job: dict[str, Any], job_store: IndexJobStore | None = None) -> None:
+    """Executes an indexing job under the per-repository lock and updates its status."""
+    job_id = str(job.get("id") or job.get("job_id") or "")
+    repo_url = str(job.get("repo_url") or "")
+    branch = str(job.get("branch") or "main")
+    llm_summaries = bool(job.get("llm_summaries", False))
+    lock_key = LOCAL_REPO_URL if repo_url.lower() == "local" else repo_url.rstrip("/")
+    lock = _SYNC_LOCKS.setdefault(lock_key, asyncio.Lock())
+
+    if job_id in _MEMORY_JOBS:
+        _MEMORY_JOBS[job_id]["status"] = "running"
+        _MEMORY_JOBS[job_id]["started_at"] = _utc_iso()
+        _MEMORY_JOBS[job_id]["attempt"] = int(_MEMORY_JOBS[job_id].get("attempt") or 0) + 1
+
+    try:
+        async with lock:
+            stats = await asyncio.to_thread(_execute_ingest, repo_url, branch, llm_summaries)
+        if job_store is not None and job_id not in _MEMORY_JOBS:
+            await asyncio.to_thread(job_store.succeed, job_id, stats=stats)
+        if job_id in _MEMORY_JOBS:
+            _MEMORY_JOBS[job_id]["status"] = "succeeded"
+            _MEMORY_JOBS[job_id]["stats"] = stats
+            _MEMORY_JOBS[job_id]["error"] = ""
+            _MEMORY_JOBS[job_id]["finished_at"] = _utc_iso()
+    except Exception as exc:
+        if job_store is not None and job_id not in _MEMORY_JOBS:
+            try:
+                await asyncio.to_thread(job_store.fail, job_id, str(exc))
+            except Exception:
+                pass
+        if job_id in _MEMORY_JOBS:
+            _MEMORY_JOBS[job_id]["status"] = "failed"
+            _MEMORY_JOBS[job_id]["error"] = str(exc)[:2000]
+            _MEMORY_JOBS[job_id]["finished_at"] = _utc_iso()
+
+
+def _enqueue_reindex_job(
+    repo_id: str,
+    repo_url: str,
+    branch: str = "main",
+    kind: str = "incremental",
+    llm_summaries: bool = False,
+) -> tuple[dict[str, Any], bool]:
+    """Enqueues a job in Supabase `index_jobs`, falling back to in-memory tracking if table/RPC is absent."""
+    try:
+        job_store = IndexJobStore()
+        row = job_store.enqueue(
+            repo_id=repo_id,
+            repo_url=repo_url,
+            branch=branch,
+            kind=kind,
+            llm_summaries=llm_summaries,
+        )
+        return public_job(row), True
+    except Exception:
+        for existing in _MEMORY_JOBS.values():
+            if existing.get("repo_id") == repo_id and existing.get("status") in ("queued", "running"):
+                return public_job(existing), False
+
+        job_id = str(uuid.uuid4())
+        row = {
+            "id": job_id,
+            "repo_id": repo_id,
+            "kind": kind,
+            "status": "queued",
+            "repo_url": repo_url,
+            "branch": branch,
+            "llm_summaries": llm_summaries,
+            "attempt": 0,
+            "stats": {},
+            "error": "",
+            "requested_at": _utc_iso(),
+            "started_at": None,
+            "finished_at": None,
+        }
+        _MEMORY_JOBS[job_id] = row
+        return public_job(row), False
+
+
+async def _background_job_worker_loop() -> None:
+    """Claims queued jobs from `index_jobs` (and sweeps expired leases) in the background."""
+    while True:
+        await asyncio.sleep(2)
+        if not (settings.NVIDIA_API_KEY and settings.SUPABASE_URL and settings.SUPABASE_KEY):
+            continue
+        try:
+            job_store = IndexJobStore()
+            await asyncio.to_thread(job_store.sweep_expired)
+            claimed = await asyncio.to_thread(job_store.claim_next, _WORKER_ID)
+            if claimed:
+                await _run_job_record(claimed, job_store=job_store)
+        except Exception:
+            pass
+
+
 async def _background_local_sync_loop() -> None:
     """Watches the local workspace and asynchronously re-embeds only changed files when saved."""
     while True:
@@ -109,6 +213,7 @@ async def _background_local_sync_loop() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     sync_task = asyncio.create_task(_background_local_sync_loop())
+    worker_task = asyncio.create_task(_background_job_worker_loop())
     try:
         yield
     finally:
