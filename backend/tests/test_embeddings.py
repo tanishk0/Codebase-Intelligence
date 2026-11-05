@@ -289,6 +289,7 @@ class TestSupabaseVectorStore(unittest.TestCase):
         self.assertEqual(self.store.last_sync_stats["changed_files"], 1)
         self.assertEqual(self.store.last_sync_stats["unchanged_files"], 1)
         self.assertEqual(self.store.last_sync_stats["deleted_files"], 1)
+        self.assertEqual(self.store.last_sync_stats["reused_chunks"], 2)
         self.assertEqual(self.store.last_sync_stats["embedded_chunks"], 2)
 
 
