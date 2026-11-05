@@ -48,17 +48,17 @@ class ConversationalRAGEngine:
         self.store = vector_store or retriever.store
         self.max_recent_messages = max_recent_messages
 
-    def ask(
+    def _prepare_turn(
         self,
         user_message: str,
         repo_id: str | None = None,
-        *,
         conversation_id: str | None = None,
         history: list[dict[str, Any]] | None = None,
-    ) -> ChatTurnResponse:
-        """Answers a user question (or follow-up) with automatic query rewriting and context carry-over."""
+    ) -> tuple[str | None, dict[str, Any] | None, list[dict[str, Any]], list[dict[str, Any]], str, RetrievalResult, list[dict[str, str]]]:
+        """Loads conversation history, runs retrieval, and builds the LLM message list."""
         rolling_summary = ""
         active_history: list[dict[str, Any]] = list(history or [])
+        conv: dict[str, Any] | None = None
 
         # 1. Load conversation state from Supabase if a conversation_id was provided
         if conversation_id:
@@ -73,7 +73,7 @@ class ConversationalRAGEngine:
             repo_id = conversation_repo_id
             rolling_summary = str(conv.get("rolling_summary") or "")
             active_history, _ = self.store.get_conversation_messages(
-                conversation_id, limit=self.max_recent_messages + 4
+                conversation_id, limit=self.max_recent_messages + 2
             )
 
         # 2. Extract cited chunk IDs from the most recent assistant message for follow-up carry-over
@@ -105,7 +105,12 @@ class ConversationalRAGEngine:
             if role in {"user", "assistant"}:
                 messages.append({"role": role, "content": str(turn.get("content") or "")})
 
-        context_block = retrieval.format_context_for_llm()
+        include_overview = (
+            not active_history
+            or len(retrieval.chunks) < 3
+            or bool(_OVERVIEW_QUERY_RE.search(user_message))
+        )
+        context_block = retrieval.format_context_for_llm(include_repo_summary=include_overview)
         if context_block:
             user_prompt = f"{context_block}\n\n---\nUser Question: {user_message}"
         else:
