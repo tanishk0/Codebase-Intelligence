@@ -87,36 +87,7 @@ class CodebaseRetriever:
 
         for c in chunks[:max_primary]:
             called_by_list = [str(x) for x in (c.get("called_by") or []) if x]
-            inherits_list = [str(x) for x in (c.get("inherits_from") or []) if x]
-
-            # Fallback: parse `# Calls:`, `# Called by:`, `# Inherits from:` from chunk header lines
-            if not (calls_list or called_by_list or inherits_list):
-                for line in str(c.get("content") or "").splitlines()[:6]:
-                    if not (
-                        line.startswith("# Calls:")
-                        or line.startswith("# Called by:")
-                        or line.startswith("# Inherits from:")
-                    ):
-                        continue
-                    for segment in line.split("|"):
-                        seg = segment.strip()
-                        if seg.startswith("# Calls:"):
-                            calls_list.extend(s.strip() for s in seg[len("# Calls:") :].split(",") if s.strip())
-                        elif seg.startswith("# Called by:"):
-                            called_by_list.extend(
-                                s.strip() for s in seg[len("# Called by:") :].split(",") if s.strip()
-                            )
-                        elif seg.startswith("# Inherits from:"):
-                            inherits_list.extend(
-                                s.strip() for s in seg[len("# Inherits from:") :].split(",") if s.strip()
-                            )
-
-            # Calls and base classes are stored as bare names, not resolved target identities.
-            # Expanding them would frequently attach unrelated symbols, so use only qualified callers.
-            raw_edges: list[str] = []
-            raw_edges.extend(edge for edge in called_by_list if "." in edge)
-
-            for sym in raw_edges:
+            for sym in (edge for edge in called_by_list if "." in edge):
                 bare = sym.rsplit(".", 1)[-1]
                 if not bare or bare in primary_symbols or sym in seen:
                     continue
@@ -134,7 +105,9 @@ class CodebaseRetriever:
         rolling_summary: str = "",
         carryover_chunk_ids: list[int] | None = None,
     ) -> RetrievalResult:
+        t0 = time.perf_counter()
         plan = self.router.plan(user_message, history=history, rolling_summary=rolling_summary)
+        t_route = (time.perf_counter() - t0) * 1000.0
 
         if not repo_id:
             raise ValueError("Select an indexed repository before asking a question.")
@@ -144,10 +117,19 @@ class CodebaseRetriever:
         repo_summary = str((repo_meta or {}).get("repo_summary") or "")
 
         if not plan.needs_retrieval:
-            return RetrievalResult(plan=plan, chunks=[], repo_summary=repo_summary)
+            return RetrievalResult(
+                plan=plan,
+                chunks=[],
+                repo_summary=repo_summary,
+                timings_ms={"route_ms": round(t_route, 1)},
+            )
 
         # 1. Unified hybrid search (keyword + semantic RRF) for every query
+        t_emb_start = time.perf_counter()
         query_embedding = self.embedder.embed_query(plan.standalone_query)
+        t_embed = (time.perf_counter() - t_emb_start) * 1000.0
+
+        t_search_start = time.perf_counter()
         candidates = self.store.hybrid_search(
             query_embedding=query_embedding,
             query_text=plan.standalone_query,
