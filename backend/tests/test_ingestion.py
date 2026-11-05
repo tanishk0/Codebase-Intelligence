@@ -145,29 +145,17 @@ class TestBackgroundReindexJobFlow(unittest.IsolatedAsyncioTestCase):
             "repo_id": "repo-2",
             "repo_url": "https://github.com/org/repo2",
             "branch": "dev",
+            "llm_summaries": False,
         }
-        mock_exec.return_value = {
-            "repo_id": "repo-2",
-            "changed_files": 1,
-            "unchanged_files": 4,
-            "deleted_files": 0,
-            "embedded_chunks": 3,
-        }
-        bg = MagicMock()
-        result = await api_main.reindex_repository("repo-2", background_tasks=bg, wait=False)
 
-        job_id = result["job_id"]
-        self.assertEqual(result["status"], "queued")
-        self.assertEqual(bg.add_task.call_count, 1)
+        with patch.object(api_main.settings, "INDEX_JOB_HEARTBEAT_SECONDS", 0.01):
+            await api_main._run_job_record(job_record, job_store=job_store)
+            await asyncio.sleep(0)
 
-        # Simulate FastAPI running the scheduled background task
-        fn, job_record, store_arg = bg.add_task.call_args.args
-        await fn(job_record, store_arg)
-
-        polled = api_main.get_index_job(job_id)["job"]
-        self.assertEqual(polled["status"], "succeeded")
-        self.assertEqual(polled["stats"]["changed_files"], 1)
-        self.assertEqual(polled["stats"]["embedded_chunks"], 3)
+        self.assertGreaterEqual(job_store.heartbeat.call_count, 1)
+        job_store.succeed.assert_called_once()
+        self.assertEqual(job_store.succeed.call_args.args[0], "job-456")
+        self.assertEqual(job_store.succeed.call_args.kwargs["stats"]["changed_files"], 1)
 
 
 if __name__ == "__main__":
