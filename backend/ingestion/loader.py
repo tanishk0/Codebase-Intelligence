@@ -46,10 +46,15 @@ def is_safe_path(path: Path, resolved_root: Path) -> bool:
         return False
 
 
-def load_repository_files(repo_root: Path) -> list[LoadedFile]:
+def load_repository_files(
+    repo_root: Path,
+    max_total_bytes: int | None = None,
+) -> list[LoadedFile]:
     """Scans the cloned directory and extracts all code files adhering to size and type limits."""
     loaded_files: list[LoadedFile] = []
     resolved_root = repo_root.resolve()
+    total_bytes = 0
+    byte_budget = max_total_bytes if max_total_bytes is not None else settings.MAX_TOTAL_BYTES
 
     # Sorted so that hitting MAX_TOTAL_FILES selects the same subset on every run. With raw
     # rglob order (filesystem-dependent) a repo above the cap produced different manifests
