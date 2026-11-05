@@ -103,78 +103,41 @@ async def _run_job_record(job: dict[str, Any], job_store: IndexJobStore) -> None
     try:
         async with lock:
             stats = await asyncio.to_thread(_execute_ingest, repo_url, branch, llm_summaries)
-        if job_store is not None and job_id not in _MEMORY_JOBS:
-            await asyncio.to_thread(job_store.succeed, job_id, stats=stats)
-        if job_id in _MEMORY_JOBS:
-            _MEMORY_JOBS[job_id]["status"] = "succeeded"
-            _MEMORY_JOBS[job_id]["stats"] = stats
-            _MEMORY_JOBS[job_id]["error"] = ""
-            _MEMORY_JOBS[job_id]["finished_at"] = _utc_iso()
+        await asyncio.to_thread(job_store.succeed, job_id, stats=stats)
     except Exception as exc:
-        if job_store is not None and job_id not in _MEMORY_JOBS:
-            try:
-                await asyncio.to_thread(job_store.fail, job_id, str(exc))
-            except Exception:
-                pass
-        if job_id in _MEMORY_JOBS:
-            _MEMORY_JOBS[job_id]["status"] = "failed"
-            _MEMORY_JOBS[job_id]["error"] = str(exc)[:2000]
-            _MEMORY_JOBS[job_id]["finished_at"] = _utc_iso()
+        try:
+            await asyncio.to_thread(job_store.fail, job_id, str(exc))
+        except Exception:
+            pass
+    finally:
+        heartbeat_task.cancel()
 
 
-def _enqueue_reindex_job(
-    repo_id: str,
-    repo_url: str,
-    branch: str = "main",
-    kind: str = "incremental",
-    llm_summaries: bool = False,
-) -> tuple[dict[str, Any], bool]:
-    """Enqueues a job in Supabase `index_jobs`, falling back to in-memory tracking if table/RPC is absent."""
+async def _claim_and_run_once() -> None:
+    """Claims and executes one queued job from `index_jobs` if available."""
     try:
         job_store = IndexJobStore()
-        row = job_store.enqueue(
-            repo_id=repo_id,
-            repo_url=repo_url,
-            branch=branch,
-            kind=kind,
-            llm_summaries=llm_summaries,
+        claimed = await asyncio.to_thread(
+            job_store.claim_next, _WORKER_ID, settings.INDEX_JOB_LEASE_SECONDS
         )
-        return public_job(row), True
+        if claimed:
+            await _run_job_record(claimed, job_store=job_store)
     except Exception:
-        for existing in _MEMORY_JOBS.values():
-            if existing.get("repo_id") == repo_id and existing.get("status") in ("queued", "running"):
-                return public_job(existing), False
-
-        job_id = str(uuid.uuid4())
-        row = {
-            "id": job_id,
-            "repo_id": repo_id,
-            "kind": kind,
-            "status": "queued",
-            "repo_url": repo_url,
-            "branch": branch,
-            "llm_summaries": llm_summaries,
-            "attempt": 0,
-            "stats": {},
-            "error": "",
-            "requested_at": _utc_iso(),
-            "started_at": None,
-            "finished_at": None,
-        }
-        _MEMORY_JOBS[job_id] = row
-        return public_job(row), False
+        pass
 
 
 async def _background_job_worker_loop() -> None:
     """Claims queued jobs from `index_jobs` (and sweeps expired leases) in the background."""
     while True:
-        await asyncio.sleep(2)
+        await asyncio.sleep(settings.INDEX_JOB_POLL_SECONDS)
         if not (settings.NVIDIA_API_KEY and settings.SUPABASE_URL and settings.SUPABASE_KEY):
             continue
         try:
             job_store = IndexJobStore()
             await asyncio.to_thread(job_store.sweep_expired)
-            claimed = await asyncio.to_thread(job_store.claim_next, _WORKER_ID)
+            claimed = await asyncio.to_thread(
+                job_store.claim_next, _WORKER_ID, settings.INDEX_JOB_LEASE_SECONDS
+            )
             if claimed:
                 await _run_job_record(claimed, job_store=job_store)
         except Exception:
@@ -182,7 +145,7 @@ async def _background_job_worker_loop() -> None:
 
 
 async def _background_local_sync_loop() -> None:
-    """Watches the local workspace and asynchronously re-embeds only changed files when saved."""
+    """Watches the local workspace and enqueues an incremental sync job when saved files change."""
     while True:
         await asyncio.sleep(15)
         if not (settings.NVIDIA_API_KEY and settings.SUPABASE_URL and settings.SUPABASE_KEY):
