@@ -313,7 +313,105 @@ class TestConversationalRAGFlow(unittest.TestCase):
 
         self.assertIn("ingestion/chunker.py:L150-L192", turn.answer)
         self.assertIn(42, turn.cited_chunk_ids)
+        self.assertIn("total_ms", turn.timings_ms)
+        self.assertIn("generate_ms", turn.timings_ms)
         mock_store.fetch_chunks_by_ids.assert_called_once_with("repo-1", [41])
+
+    def test_rolling_summary_evicts_oldest_pair_only_when_window_overflows(self) -> None:
+        mock_store = MagicMock()
+        mock_llm = MagicMock()
+        mock_llm.complete.return_value = "Updated summary."
+        engine = ConversationalRAGEngine(
+            retriever=MagicMock(),
+            llm_client=mock_llm,
+            vector_store=mock_store,
+            max_recent_messages=4,
+        )
+        fake_retrieval = MagicMock()
+        fake_retrieval.plan.standalone_query = "q"
+        fake_retrieval.cited_chunk_ids = []
+
+        # Window of 2 (< max_recent_messages=4) -> must NOT summarize yet
+        engine._persist_turn(
+            conversation_id="conv-1",
+            conv={"id": "conv-1", "title": "Chat", "rolling_summary": ""},
+            user_message="u2",
+            answer="a2",
+            retrieval=fake_retrieval,
+            active_history=[
+                {"role": "user", "content": "u1"},
+                {"role": "assistant", "content": "a1"},
+            ],
+            recent_window=[
+                {"role": "user", "content": "u1"},
+                {"role": "assistant", "content": "a1"},
+            ],
+            rolling_summary="",
+        )
+        mock_llm.complete.assert_not_called()
+
+        # Window of 4 (== max_recent_messages=4) -> evicts u1/a1 and summarizes exactly once
+        window_4 = [
+            {"role": "user", "content": "u1"},
+            {"role": "assistant", "content": "a1"},
+            {"role": "user", "content": "u2"},
+            {"role": "assistant", "content": "a2"},
+        ]
+        engine._persist_turn(
+            conversation_id="conv-1",
+            conv={"id": "conv-1", "title": "Chat", "rolling_summary": ""},
+            user_message="u3",
+            answer="a3",
+            retrieval=fake_retrieval,
+            active_history=window_4,
+            recent_window=window_4,
+            rolling_summary="",
+        )
+        mock_llm.complete.assert_called_once()
+        summary_prompt = mock_llm.complete.call_args.args[0][1]["content"]
+        self.assertIn("u1", summary_prompt)
+        self.assertIn("a1", summary_prompt)
+        self.assertNotIn("u2", summary_prompt)
+
+    def test_ask_stream_yields_meta_tokens_and_done_payload(self) -> None:
+        mock_store = MagicMock()
+        mock_store.get_repository.return_value = {"id": "repo-1", "active_run_id": "run-1", "repo_summary": "Summary"}
+        mock_store.hybrid_search.return_value = [
+            {
+                "id": 7,
+                "file_path": "main.py",
+                "start_line": 1,
+                "end_line": 10,
+                "node_type": "function",
+                "symbol_name": "app",
+                "content": "# File: main.py\ndef app(): pass",
+                "similarity": 0.9,
+                "rrf_score": 0.04,
+            }
+        ]
+        mock_store.fetch_context_neighbors.return_value = []
+        mock_embedder = MagicMock()
+        mock_embedder.embed_query.return_value = [0.1, 0.2]
+        mock_llm = MagicMock()
+        mock_llm.stream.return_value = iter(["See ", "`[main.py:L1-L10]`."])
+        mock_reranker = MagicMock()
+        mock_reranker.rerank.side_effect = lambda _q, chunks, top_k: chunks[:top_k]
+
+        retriever = CodebaseRetriever(
+            vector_store=mock_store,
+            embedder=mock_embedder,
+            llm_client=mock_llm,
+            model_reranker=mock_reranker,
+        )
+        engine = ConversationalRAGEngine(retriever=retriever, llm_client=mock_llm, vector_store=mock_store)
+
+        events = list(engine.ask_stream("where is app defined?", repo_id="repo-1"))
+        event_types = [e["type"] for e in events]
+        self.assertEqual(event_types, ["metadata", "token", "token", "done"])
+        done_event = events[-1]
+        self.assertEqual(done_event["answer"], "See `[main.py:L1-L10]`.")
+        self.assertEqual(done_event["cited_chunk_ids"], [7])
+        self.assertIn("total_ms", done_event["timings_ms"])
 
 
 class TestDependencyAnalyzer(unittest.TestCase):
