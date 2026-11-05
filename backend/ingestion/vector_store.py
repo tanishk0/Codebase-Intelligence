@@ -277,6 +277,29 @@ class SupabaseVectorStore:
                 return _apply({key: value for key, value in payload.items() if key not in optional})
             raise
 
+    def delete_chunks_for_files(
+        self,
+        repo_id: str,
+        run_id: str,
+        file_paths: list[str],
+        batch_size: int = 200,
+    ) -> None:
+        """Deletes chunks belonging to specific changed or deleted files within an active run."""
+        paths = [path for path in dict.fromkeys(file_paths) if path]
+        if not paths:
+            return
+
+        for start in range(0, len(paths), batch_size):
+            batch = paths[start : start + batch_size]
+            (
+                self.client.table("code_chunks")
+                .delete()
+                .eq("repo_id", repo_id)
+                .eq("run_id", run_id)
+                .in_("file_path", batch)
+                .execute()
+            )
+
     def copy_chunks_to_run(
         self,
         repo_id: str,
@@ -516,7 +539,7 @@ class SupabaseVectorStore:
                 ]
 
                 changed_set = set(changed_files) | set(edge_changed)
-                copy_set = [fp for fp in unchanged_files if fp not in changed_set]
+                files_to_delete = sorted(changed_set | set(deleted_files))
 
                 repo_summary = ""
                 if include_summaries and all_chunks:
@@ -529,10 +552,11 @@ class SupabaseVectorStore:
                         use_llm=llm_summaries,
                     )
 
+                unchanged_chunk_count = sum(1 for c in all_chunks if c.file_path not in changed_set)
                 chunks_to_embed = [c for c in all_chunks if c.file_path in changed_set]
 
-                # Embed before writing anything. The staging run stays invisible until the swap,
-                # so a failure here costs API calls but can never degrade the live index.
+                # 1. Embed changed files in memory BEFORE touching the database.
+                # If the embedding API fails or times out, the live index is 100% untouched.
                 embedded_batches: list[list[EmbeddedChunk]] = []
                 if chunks_to_embed:
                     for batch in active_embedder.iter_embedded_chunks(chunks_to_embed):
