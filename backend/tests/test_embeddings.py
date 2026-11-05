@@ -315,15 +315,46 @@ class TestSupabaseVectorStore(unittest.TestCase):
         self.assertEqual(self.store.last_sync_stats["reused_chunks"], 2)
         self.assertEqual(self.store.last_sync_stats["embedded_chunks"], 2)
 
-        # Verify in-place file-level swap: no RPC copy of unchanged rows, only b.py & deleted.py deleted
-        self.client.rpc.assert_not_called()
-        delete_in_call = self.chunks_table.delete.return_value.eq.return_value.eq.return_value.in_
-        delete_in_call.assert_called_once_with("file_path", ["b.py", "deleted.py"])
+        # Verify in-place file-level swap: one atomic RPC for b.py + deleted.py, a.py untouched
+        self.assertEqual(self.client.rpc.call_count, 1)
+        rpc_name, rpc_params = self.client.rpc.call_args.args
+        self.assertEqual(rpc_name, "replace_file_chunks")
+        self.assertEqual(rpc_params["p_run_id"], "run-existing")
+        self.assertEqual(rpc_params["p_file_paths"], ["b.py", "deleted.py"])
+        self.assertEqual({row["file_path"] for row in rpc_params["p_rows"]}, {"b.py"})
+        self.assertEqual(len(rpc_params["p_rows"]), 2)
 
-        # Inserted chunks go into the existing active_run_id ("run-existing")
-        inserted_rows = [row for c in self.chunks_table.insert.call_args_list for row in c.args[0]]
-        self.assertTrue(all(row["run_id"] == "run-existing" for row in inserted_rows))
+        # No direct delete/insert on code_chunks: the swap happens inside the transaction
+        self.chunks_table.delete.assert_not_called()
+        self.chunks_table.insert.assert_not_called()
         self.assertEqual(self.repo_table.update.call_args.args[0]["chunk_count"], 4)
+
+    def test_incremental_sync_streams_large_diffs_in_bounded_groups(self) -> None:
+        files = [LoadedFile(f"f{i}.py", f"def f{i}(): return {i}\n", ".py", 20) for i in range(6)]
+        self.repo_table.select.return_value.eq.return_value.execute.return_value.data = [
+            {
+                "id": "repo-1",
+                "active_run_id": "run-existing",
+                "embed_model": "test-model",
+                "embedding_dim": 2,
+                # f0 unchanged, f1..f5 changed
+                "file_hashes": {f.file_path: (f.content_hash if i == 0 else "old") for i, f in enumerate(files)},
+            }
+        ]
+        embedder = MagicMock()
+        embedder.model = "test-model"
+        embedder.dimensions = 2
+        embedder.batch_size = 1  # group limit = 2 chunks
+        embedder.iter_embedded_chunks.side_effect = lambda cs: iter([[EmbeddedChunk(c, [0.1, 0.2]) for c in cs]])
+        chunks = [CodeChunk(f.file_path, f.content, 1, 1, "function", symbol_name=f"f{i}") for i, f in enumerate(files)]
+
+        self.store.index_chunks(
+            "https://github.com/org/repo", chunks=chunks, embedder=embedder, files=files, include_summaries=False
+        )
+
+        groups = [c.args[1]["p_file_paths"] for c in self.client.rpc.call_args_list]
+        self.assertEqual(groups, [["f1.py", "f2.py"], ["f3.py", "f4.py"], ["f5.py"]])
+        self.assertTrue(all(len(c.args[1]["p_rows"]) <= 2 for c in self.client.rpc.call_args_list))
 
     def test_incremental_sync_embedding_failure_leaves_live_index_untouched(self) -> None:
         unchanged_file = LoadedFile("a.py", "def a(): return 1\n", ".py", 18)
@@ -354,7 +385,8 @@ class TestSupabaseVectorStore(unittest.TestCase):
                 files=[unchanged_file, changed_file],
             )
 
-        # Because embedding runs first, neither delete nor insert nor repo update was called
+        # Embedding runs before the swap RPC, so the live index was never touched
+        self.client.rpc.assert_not_called()
         self.chunks_table.delete.assert_not_called()
         self.chunks_table.insert.assert_not_called()
         self.repo_table.update.assert_not_called()
