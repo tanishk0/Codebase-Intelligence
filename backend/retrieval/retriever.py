@@ -143,19 +143,22 @@ class CodebaseRetriever:
             for item in self.store.fetch_chunks_by_ids(repo_id, list(carry_set)):
                 item.setdefault("similarity", 0.45)
                 candidates.append(item)
+        t_search = (time.perf_counter() - t_search_start) * 1000.0
 
         # 3. The cross-encoder sees every unique hybrid candidate and determines final top-K order.
-        # Do not heuristically prune the candidate set before model scoring.
         model_candidates = NvidiaCrossEncoderReranker.deduplicate(candidates)
         if len(model_candidates) > 1000:
             raise RuntimeError("Too many retrieval candidates for the reranking model. Reduce RETRIEVAL_CANDIDATE_POOL.")
+        t_rerank_start = time.perf_counter()
         top_chunks = self.model_reranker.rerank(
             plan.standalone_query,
             model_candidates,
             top_k=settings.RETRIEVAL_TOP_K,
         )
+        t_rerank = (time.perf_counter() - t_rerank_start) * 1000.0
 
         # 4. Expand context with enclosing class headers, file preambles, and 1-hop dependency neighbors (capped at 4)
+        t_exp_start = time.perf_counter()
         neighbors: list[dict[str, Any]] = []
         if repo_id and top_chunks:
             matched_files = [str(c["file_path"]) for c in top_chunks if c.get("file_path")]
@@ -175,9 +178,18 @@ class CodebaseRetriever:
 
         # 5. Merge overlapping spans and enforce token budget
         assembled = self.assembler.assemble(top_chunks, neighbor_chunks=neighbors)
+        t_expand = (time.perf_counter() - t_exp_start) * 1000.0
+
         return RetrievalResult(
             plan=plan,
             chunks=assembled,
             repo_summary=repo_summary,
             no_relevant_code=not top_chunks,
+            timings_ms={
+                "route_ms": round(t_route, 1),
+                "embed_ms": round(t_embed, 1),
+                "search_ms": round(t_search, 1),
+                "rerank_ms": round(t_rerank, 1),
+                "expand_ms": round(t_expand, 1),
+            },
         )
