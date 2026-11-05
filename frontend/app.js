@@ -123,8 +123,29 @@ async function triggerIngest(repoUrl, branch, llmSummaries) {
   catch (err) { els.ingestStatus.textContent = `✗ ${err.message}`; } finally { els.ingestBtn.disabled = false; els.ingestLocalBtn.disabled = false; els.reindexRepoBtn.disabled = false; }
 }
 
+async function pollJobUntilDone(jobId, repoLabel) {
+  const maxPolls = 300;
+  for (let i = 0; i < maxPolls; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const res = await api(`/api/jobs/${encodeURIComponent(jobId)}`);
+    const job = res.job || res;
+    if (job.status === "queued" || job.status === "running") {
+      els.ingestStatus.textContent = `Background job ${job.status}: re-indexing ${repoLabel}...`;
+      continue;
+    }
+    if (job.status === "failed") {
+      throw new Error(job.error || "Background re-index job failed.");
+    }
+    if (job.status === "succeeded") {
+      return job.stats || {};
+    }
+  }
+  throw new Error("Timed out waiting for background re-index job.");
+}
+
 async function reindexActiveRepo() {
   if (!state.activeRepoId) { els.ingestStatus.textContent = "Select a repository to re-index."; return; }
+  const repoLabel = state.activeRepoUrl || "repository";
   els.reindexRepoBtn.disabled = true; els.ingestBtn.disabled = true; els.ingestLocalBtn.disabled = true;
   els.ingestStatus.textContent = `Re-indexing changed files in ${state.activeRepoUrl || "repository"}...`;
   try {
