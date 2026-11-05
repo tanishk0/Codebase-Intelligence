@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+import threading
 import time
 from typing import Callable, Iterator, Literal
 import httpx
@@ -23,13 +24,19 @@ class EmbeddingError(RuntimeError):
 
 
 class RateLimiter:
-    """Minimal client-side limiter that spaces requests to stay under a requests-per-minute budget."""
+    """Thread-safe priority rate limiter that spaces requests under an RPM budget.
+
+    Interactive calls (chat, query embedding, reranking) use the full RPM rate, while
+    background calls (batch passage indexing) use a lower rate when `reserved_interactive_rpm`
+    is set so background indexing never starves interactive chat.
+    """
 
     def __init__(
         self,
         requests_per_minute: int,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        reserved_interactive_rpm: int = 0,
     ) -> None:
         self.min_interval = 60.0 / requests_per_minute if requests_per_minute > 0 else 0.0
         self._clock = clock
