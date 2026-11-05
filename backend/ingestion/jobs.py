@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from supabase import Client
 from config import settings
+from ingestion.vector_store import shared_supabase_client
 
 ACTIVE_STATUSES = ("queued", "running")
 TERMINAL_STATUSES = ("succeeded", "failed")
