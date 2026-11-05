@@ -36,8 +36,9 @@ class Settings(BaseSettings):
     RETRIEVAL_CONTEXT_TOKEN_BUDGET: int = 6_000
 
     # Background indexing jobs
-    INDEX_JOB_LEASE_SECONDS: int = 900      # A worker that stops heartbeating is presumed dead
-    INDEX_JOB_POLL_SECONDS: float = 2.0     # Idle poll interval for the job worker
+    INDEX_JOB_LEASE_SECONDS: int = 900       # A worker that stops heartbeating is presumed dead
+    INDEX_JOB_HEARTBEAT_SECONDS: float = 60.0  # Lease extension interval during active jobs
+    INDEX_JOB_POLL_SECONDS: float = 2.0      # Idle poll interval for the job worker
 
     # Ingestion limits
     MAX_FILE_SIZE_BYTES: int = 500_000  # 500 KB per file limit
