@@ -125,7 +125,12 @@ class NvidiaEmbedder:
         self.timeout = timeout
         self._sleep = sleep
         rpm = requests_per_minute if requests_per_minute is not None else settings.NVIDIA_REQUESTS_PER_MINUTE
-        self.rate_limiter = rate_limiter or RateLimiter(rpm, sleep=sleep)
+        if rate_limiter is not None:
+            self.rate_limiter = rate_limiter
+        elif requests_per_minute is None and sleep is time.sleep:
+            self.rate_limiter = shared_rate_limiter("nvidia_nim", rpm)
+        else:
+            self.rate_limiter = RateLimiter(rpm, sleep=sleep)
 
     def _backoff(self, attempt: int, response: httpx.Response | None = None) -> float:
         retry_after = parse_retry_after(response.headers.get("Retry-After")) if response is not None else None
@@ -157,9 +162,10 @@ class NvidiaEmbedder:
             "truncate": "END",
         }
 
+        priority: Literal["interactive", "background"] = "interactive" if input_type == "query" else "background"
         for attempt in range(self.max_retries + 1):
             is_last = attempt == self.max_retries
-            self.rate_limiter.wait()
+            self.rate_limiter.wait(priority)
 
             try:
                 response = client.post(url, headers=headers, json=payload)
