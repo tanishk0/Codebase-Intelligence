@@ -39,32 +39,45 @@ class RateLimiter:
         reserved_interactive_rpm: int = 0,
     ) -> None:
         self.min_interval = 60.0 / requests_per_minute if requests_per_minute > 0 else 0.0
+        bg_rpm = max(1, requests_per_minute - reserved_interactive_rpm) if requests_per_minute > 0 else 0
+        self.background_interval = 60.0 / bg_rpm if bg_rpm > 0 else 0.0
         self._clock = clock
         self._sleep = sleep
-        self._next_allowed = 0.0
+        self._last_dispatched = float("-inf")
+        self._lock = threading.Lock()
 
-    def wait(self) -> None:
-        now = self._clock()
-        if now < self._next_allowed:
-            self._sleep(self._next_allowed - now)
-            now = self._next_allowed
-        self._next_allowed = now + self.min_interval
+    def wait(self, priority: Literal["interactive", "background"] = "interactive") -> None:
+        interval = self.background_interval if priority == "background" else self.min_interval
+        with self._lock:
+            now = self._clock()
+            scheduled_at = max(now, self._last_dispatched + interval)
+            wait_seconds = max(0.0, scheduled_at - now)
+            self._last_dispatched = scheduled_at
+        if wait_seconds > 0:
+            self._sleep(wait_seconds)
 
 
 _SHARED_LIMITERS: dict[str, RateLimiter] = {}
+_SHARED_LIMITERS_LOCK = threading.Lock()
 
 
-def shared_rate_limiter(name: str, requests_per_minute: int) -> RateLimiter:
-    """Returns a process-wide limiter per provider.
-
-    Each embedding client used to build its own limiter, so two concurrent indexing jobs
-    shared the provider quota on paper but consumed 2x the RPM in practice and hit 429s.
-    """
-    limiter = _SHARED_LIMITERS.get(name)
-    if limiter is None:
-        limiter = RateLimiter(requests_per_minute)
-        _SHARED_LIMITERS[name] = limiter
-    return limiter
+def shared_rate_limiter(
+    name: str,
+    requests_per_minute: int,
+    reserved_interactive_rpm: int | None = None,
+) -> RateLimiter:
+    """Returns a process-wide thread-safe limiter per provider."""
+    with _SHARED_LIMITERS_LOCK:
+        limiter = _SHARED_LIMITERS.get(name)
+        if limiter is None:
+            reserved = (
+                reserved_interactive_rpm
+                if reserved_interactive_rpm is not None
+                else settings.NVIDIA_INTERACTIVE_RESERVED_RPM
+            )
+            limiter = RateLimiter(requests_per_minute, reserved_interactive_rpm=reserved)
+            _SHARED_LIMITERS[name] = limiter
+        return limiter
 
 
 def parse_retry_after(value: str | None) -> float | None:
