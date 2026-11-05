@@ -14,7 +14,7 @@ from ingestion.summarizer import RepoSummarizer, build_file_outline
 from ingestion.vector_store import SupabaseVectorStore
 from retrieval.chat_engine import ConversationalRAGEngine
 from retrieval.query_router import QueryPlan, QueryRewriteError, QueryRouter
-from retrieval.reranker import CodeReranker, ContextAssembler, NvidiaCrossEncoderReranker, RerankerServiceError
+from retrieval.reranker import ContextAssembler, NvidiaCrossEncoderReranker, RerankerServiceError
 from retrieval.retriever import CodebaseRetriever
 
 
