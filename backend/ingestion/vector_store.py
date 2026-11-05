@@ -568,49 +568,35 @@ class SupabaseVectorStore:
                                 )
                         embedded_batches.append(batch)
 
-                target_run_id = str(uuid.uuid4())
-                copied = 0
+                # 2. Swap only changed/deleted files in-place within the existing active_run_id.
+                # Unchanged files' rows stay untouched in Postgres (zero row duplication).
+                self.delete_chunks_for_files(repo_id, active_run_id, files_to_delete)
+
                 embedded_count = 0
-                try:
-                    # Unchanged files carry their embeddings forward inside Postgres: no API
-                    # calls, and no row of the live run is modified.
-                    copied = self.copy_chunks_to_run(repo_id, active_run_id, target_run_id, copy_set)
-                    for batch in embedded_batches:
-                        embedded_count += self.insert_chunks(
-                            repo_id=repo_id,
-                            run_id=target_run_id,
-                            embedded_chunks=batch,
-                        )
-
-                    activated = self._activate_run(
+                for batch in embedded_batches:
+                    embedded_count += self.insert_chunks(
                         repo_id=repo_id,
-                        run_id=target_run_id,
-                        chunk_count=copied + embedded_count,
-                        embed_model=active_embedder.model,
-                        embedding_dim=active_embedder.dimensions,
-                        repo_summary=repo_summary,
-                        file_hashes=new_hashes,
-                        pipeline_version=pipeline_version,
-                        file_edges=edge_signatures,
-                        expected_run_id=active_run_id,
+                        run_id=active_run_id,
+                        embedded_chunks=batch,
                     )
-                    if not activated:
-                        raise RuntimeError(
-                            "The active index changed while this sync was running; discarding this "
-                            "result instead of overwriting a newer run."
-                        )
-                except BaseException:
-                    # Discard the staging run; the live index is still the previous run.
-                    try:
-                        self._delete_run(repo_id, target_run_id)
-                    except Exception:
-                        pass
-                    raise
 
-                try:
-                    self._delete_stale_runs(repo_id, keep_run_id=target_run_id)
-                except Exception:
-                    pass
+                # 3. Update repository manifest and chunk count on the same active_run_id.
+                activated = self._activate_run(
+                    repo_id=repo_id,
+                    run_id=active_run_id,
+                    chunk_count=unchanged_chunk_count + embedded_count,
+                    embed_model=active_embedder.model,
+                    embedding_dim=active_embedder.dimensions,
+                    repo_summary=repo_summary,
+                    file_hashes=new_hashes,
+                    pipeline_version=pipeline_version,
+                    file_edges=edge_signatures,
+                    expected_run_id=active_run_id,
+                )
+                if not activated:
+                    raise RuntimeError(
+                        "The active index changed while this sync was running."
+                    )
 
                 self.last_sync_stats = {
                     "mode": "incremental",
@@ -618,7 +604,8 @@ class SupabaseVectorStore:
                     "edge_invalidated_files": len(edge_changed),
                     "unchanged_files": len(unchanged_files),
                     "deleted_files": len(deleted_files),
-                    "copied_chunks": copied,
+                    "reused_chunks": unchanged_chunk_count,
+                    "copied_chunks": unchanged_chunk_count,
                     "embedded_chunks": embedded_count,
                 }
                 return repo_id
