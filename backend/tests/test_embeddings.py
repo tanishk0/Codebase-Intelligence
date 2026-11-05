@@ -171,6 +171,7 @@ class TestSupabaseVectorStore(unittest.TestCase):
         embedder = MagicMock()
         embedder.model = "test-model"
         embedder.dimensions = dims
+        embedder.batch_size = 32
 
         def gen(_chunks):
             if isinstance(batches, Exception):
@@ -286,6 +287,7 @@ class TestSupabaseVectorStore(unittest.TestCase):
         embedder = MagicMock()
         embedder.model = "test-model"
         embedder.dimensions = 2
+        embedder.batch_size = 32
 
         def fake_iter(chunks_to_embed):
             embedded_inputs.append([c.file_path for c in chunks_to_embed])
