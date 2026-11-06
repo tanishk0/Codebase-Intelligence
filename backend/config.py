@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     # External API & Database credentials
     SUPABASE_URL: str = ""
     SUPABASE_KEY: str = ""
+    SUPABASE_ANON_KEY: str = ""
     NVIDIA_API_KEY: str = ""
 
     # Embedding & LLM configuration (NVIDIA NIM)
