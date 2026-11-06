@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   X,
   Clock,
+  LogOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,6 +52,9 @@ export default function Sidebar({
   onToggleTheme,
   isCollapsed,
   onToggleCollapse,
+  user,
+  onSignOut,
+  onNavigateToLanding,
 }) {
   const [repoSearch, setRepoSearch] = useState("");
   const [repoPendingDelete, setRepoPendingDelete] = useState(null);
@@ -89,12 +93,31 @@ export default function Sidebar({
         {/* Top Instrument Plate Header */}
         <div className="border-b border-border px-4 pt-4 pb-3.5">
           <div className="mb-1 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-            <span>UNIT // CB-COPILOT</span>
+            {onNavigateToLanding ? (
+              <button
+                type="button"
+                onClick={onNavigateToLanding}
+                className="hover:text-foreground transition-colors cursor-pointer"
+                title="Return to Landing Page"
+              >
+                ← LANDING // CB-COPILOT
+              </button>
+            ) : (
+              <span>UNIT // CB-COPILOT</span>
+            )}
             <span>REV 2.4</span>
           </div>
 
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
+            <div
+              onClick={onNavigateToLanding}
+              role={onNavigateToLanding ? "button" : undefined}
+              tabIndex={onNavigateToLanding ? 0 : undefined}
+              className={cn(
+                "flex items-center gap-2.5",
+                onNavigateToLanding && "cursor-pointer group"
+              )}
+            >
               <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-xs">
                 <Terminal className="h-4 w-4" strokeWidth={2.2} />
               </div>
@@ -366,6 +389,53 @@ export default function Sidebar({
             </div>
           )}
         </ScrollArea>
+
+        {/* Authenticated Operator Profile Pod */}
+        {user && (
+          <div className="flex items-center justify-between gap-2.5 border-t border-border bg-card/75 px-3.5 py-2.5">
+            <div className="flex min-w-0 items-center gap-2.5">
+              {user.avatarUrl ? (
+                <img
+                  src={user.avatarUrl}
+                  alt={user.name || "Operator"}
+                  referrerPolicy="no-referrer"
+                  className="h-8 w-8 shrink-0 rounded-md border border-border object-cover"
+                />
+              ) : (
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-primary/30 bg-primary/10 font-mono text-xs font-bold uppercase text-primary">
+                  {(user.name || user.email || "OP").slice(0, 2)}
+                </div>
+              )}
+              <div className="min-w-0">
+                <div className="truncate font-display text-xs font-bold text-foreground">
+                  {user.name || "Operator"}
+                </div>
+                {user.email && (
+                  <div className="truncate font-mono text-[10px] text-muted-foreground">
+                    {user.email}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {onSignOut && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={onSignOut}
+                    className="h-7 w-7 shrink-0 rounded-md text-muted-foreground hover:bg-destructive/15 hover:text-destructive"
+                    aria-label="Sign out"
+                  >
+                    <LogOut className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">Sign out</TooltipContent>
+              </Tooltip>
+            )}
+          </div>
+        )}
 
         {/* Telemetry & Surface Mode Footer */}
         <div className="flex items-center justify-between border-t border-border bg-muted/35 px-3.5 py-2.5">
