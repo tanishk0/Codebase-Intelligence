@@ -2,8 +2,33 @@
  * API client and formatting helpers for Codebase Copilot.
  */
 
+let activeAccessToken = null;
+let activeUserId = null;
+
+export function setAuthSession(accessToken, userId = null) {
+  activeAccessToken = accessToken || null;
+  activeUserId = userId || null;
+}
+
+export function clearAuthSession() {
+  activeAccessToken = null;
+  activeUserId = null;
+}
+
+export function getAuthHeaders() {
+  const headers = {};
+  if (activeAccessToken) {
+    headers.Authorization = `Bearer ${activeAccessToken}`;
+  }
+  if (activeUserId) {
+    headers["X-User-Id"] = activeUserId;
+  }
+  return headers;
+}
+
 export async function apiFetch(url, options = {}) {
   const headers = {
+    ...getAuthHeaders(),
     ...(options.headers || {}),
   };
 
@@ -106,7 +131,10 @@ export async function streamChatMessage({
 
   const res = await fetch("/api/chat/stream", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+    },
     body: JSON.stringify(payload),
   });
 
