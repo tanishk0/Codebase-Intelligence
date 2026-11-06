@@ -3,7 +3,9 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import time
 from typing import Any, Iterator
+from urllib.parse import urlencode
 import uuid
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -216,10 +218,59 @@ class CreateConversationRequest(BaseModel):
     title: str = "New chat"
 
 
+_TOKEN_CACHE_TTL_SECONDS = 300.0
+_TOKEN_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def _verify_supabase_token(token: str) -> dict[str, Any] | None:
+    """Verifies a Supabase Auth JWT and returns normalized operator profile metadata."""
+    cleaned = (token or "").strip()
+    if not cleaned:
+        return None
+
+    now = time.monotonic()
+    cached = _TOKEN_CACHE.get(cleaned)
+    if cached and cached[0] > now:
+        return dict(cached[1])
+
+    try:
+        from ingestion.vector_store import shared_supabase_client
+
+        client = shared_supabase_client()
+        res = client.auth.get_user(cleaned)
+        user = getattr(res, "user", None)
+        if not user or not getattr(user, "id", None):
+            return None
+
+        meta = dict(getattr(user, "user_metadata", None) or {})
+        app_meta = dict(getattr(user, "app_metadata", None) or {})
+        email = str(getattr(user, "email", None) or meta.get("email") or "")
+        fallback_name = email.split("@")[0] if "@" in email else "Operator"
+        profile = {
+            "id": str(user.id),
+            "email": email,
+            "name": str(
+                meta.get("full_name")
+                or meta.get("name")
+                or meta.get("user_name")
+                or fallback_name
+            ),
+            "avatar_url": str(meta.get("avatar_url") or meta.get("picture") or ""),
+            "provider": str(app_meta.get("provider") or "google"),
+        }
+        _TOKEN_CACHE[cleaned] = (now + _TOKEN_CACHE_TTL_SECONDS, profile)
+        return dict(profile)
+    except Exception:
+        return None
+
+
 @dataclass
 class AuthContext:
-    """Request-scoped auth context; plug JWT/Supabase Auth verification here when auth is enabled."""
+    """Request-scoped auth context verified via Supabase Auth (Google OAuth JWT)."""
     user_id: str | None = None
+    email: str | None = None
+    name: str | None = None
+    avatar_url: str | None = None
     access_token: str | None = None
 
 
@@ -228,9 +279,75 @@ def get_auth_context(
     x_user_id: str | None = Header(default=None),
 ) -> AuthContext:
     token = None
-    if authorization and authorization.lower().startswith("bearer "):
+    if isinstance(authorization, str) and authorization.lower().startswith("bearer "):
         token = authorization[7:].strip() or None
-    return AuthContext(user_id=x_user_id, access_token=token)
+
+    resolved_user_id = x_user_id if isinstance(x_user_id, str) else None
+    email = None
+    name = None
+    avatar_url = None
+
+    if token:
+        verified = _verify_supabase_token(token)
+        if verified:
+            resolved_user_id = verified.get("id") or resolved_user_id
+            email = verified.get("email")
+            name = verified.get("name")
+            avatar_url = verified.get("avatar_url")
+
+    return AuthContext(
+        user_id=resolved_user_id,
+        email=email,
+        name=name,
+        avatar_url=avatar_url,
+        access_token=token,
+    )
+
+
+@app.get("/api/auth/config")
+def get_auth_config() -> dict[str, Any]:
+    """Returns public Supabase Auth configuration for Google OAuth sign-in on the frontend."""
+    anon_key = settings.SUPABASE_ANON_KEY.strip()
+    if not anon_key and settings.SUPABASE_KEY and not settings.SUPABASE_KEY.startswith("sb_secret_"):
+        anon_key = settings.SUPABASE_KEY.strip()
+    return {
+        "enabled": bool(settings.SUPABASE_URL and (anon_key or settings.SUPABASE_KEY)),
+        "providers": ["google"],
+        "supabase_url": settings.SUPABASE_URL.rstrip("/") if settings.SUPABASE_URL else "",
+        "supabase_anon_key": anon_key,
+    }
+
+
+@app.get("/api/auth/google/url")
+def get_google_oauth_url(redirect_to: str = Query(default="")) -> dict[str, Any]:
+    """Returns the Supabase Google OAuth authorization URL."""
+    if not settings.SUPABASE_URL:
+        raise HTTPException(status_code=400, detail="SUPABASE_URL is not configured in .env")
+    base_url = settings.SUPABASE_URL.rstrip("/")
+    params: dict[str, str] = {"provider": "google"}
+    if isinstance(redirect_to, str) and redirect_to.strip():
+        params["redirect_to"] = redirect_to.strip()
+    authorize_url = f"{base_url}/auth/v1/authorize?{urlencode(params)}"
+    return {"url": authorize_url, "provider": "google"}
+
+
+@app.get("/api/auth/me")
+def get_current_user(auth: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    """Verifies the active Bearer token and returns the authenticated Google user profile."""
+    if not auth.access_token:
+        raise HTTPException(status_code=401, detail="Missing authentication token.")
+    verified = _verify_supabase_token(auth.access_token)
+    if not verified:
+        raise HTTPException(status_code=401, detail="Invalid or expired authentication session.")
+    return {"authenticated": True, "user": verified}
+
+
+@app.post("/api/auth/logout")
+def logout_user(auth: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    """Evicts the current access token from the server verification cache."""
+    if auth.access_token:
+        _TOKEN_CACHE.pop(auth.access_token, None)
+    return {"ok": True}
 
 
 @app.get("/api/health")
