@@ -158,6 +158,54 @@ class TestBackgroundReindexJobFlow(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job_store.succeed.call_args.kwargs["stats"]["changed_files"], 1)
 
 
+class TestGoogleAuthEndpoints(unittest.TestCase):
+    def setUp(self) -> None:
+        api_main._TOKEN_CACHE.clear()
+
+    def test_auth_config_returns_google_provider_and_public_key(self) -> None:
+        with (
+            patch.object(api_main.settings, "SUPABASE_URL", "https://example.supabase.co/"),
+            patch.object(api_main.settings, "SUPABASE_KEY", "sb_publishable_test_key"),
+            patch.object(api_main.settings, "SUPABASE_ANON_KEY", ""),
+        ):
+            cfg = api_main.get_auth_config()
+            self.assertTrue(cfg["enabled"])
+            self.assertEqual(cfg["providers"], ["google"])
+            self.assertEqual(cfg["supabase_url"], "https://example.supabase.co")
+            self.assertEqual(cfg["supabase_anon_key"], "sb_publishable_test_key")
+
+    def test_google_oauth_url_builds_authorize_endpoint(self) -> None:
+        with patch.object(api_main.settings, "SUPABASE_URL", "https://example.supabase.co"):
+            res = api_main.get_google_oauth_url(redirect_to="http://localhost:5173")
+            self.assertEqual(res["provider"], "google")
+            self.assertIn("https://example.supabase.co/auth/v1/authorize?", res["url"])
+            self.assertIn("provider=google", res["url"])
+            self.assertIn("redirect_to=http%3A%2F%2Flocalhost%3A5173", res["url"])
+
+    @patch("ingestion.vector_store.shared_supabase_client")
+    def test_verify_supabase_token_and_auth_context(self, mock_client_fn: MagicMock) -> None:
+        fake_user = MagicMock()
+        fake_user.id = "user-uuid-1"
+        fake_user.email = "dev@example.com"
+        fake_user.user_metadata = {"full_name": "Ada Lovelace", "avatar_url": "https://img.example/ada.png"}
+        fake_user.app_metadata = {"provider": "google"}
+        mock_client_fn.return_value.auth.get_user.return_value = MagicMock(user=fake_user)
+
+        ctx = api_main.get_auth_context(authorization="Bearer valid-jwt-token", x_user_id=None)
+        self.assertEqual(ctx.user_id, "user-uuid-1")
+        self.assertEqual(ctx.email, "dev@example.com")
+        self.assertEqual(ctx.name, "Ada Lovelace")
+        self.assertEqual(ctx.avatar_url, "https://img.example/ada.png")
+
+        me = api_main.get_current_user(auth=ctx)
+        self.assertTrue(me["authenticated"])
+        self.assertEqual(me["user"]["email"], "dev@example.com")
+
+        out = api_main.logout_user(auth=ctx)
+        self.assertTrue(out["ok"])
+        self.assertNotIn("valid-jwt-token", api_main._TOKEN_CACHE)
+
+
 if __name__ == "__main__":
     unittest.main()
 
