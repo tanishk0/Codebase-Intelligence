@@ -18,6 +18,7 @@ env/
 # Distribution / packaging
 build/
 dist/
+node_modules/
 *.egg-info/
 
 # Root-level legacy / scratch directories and files
