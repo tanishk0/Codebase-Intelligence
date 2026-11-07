@@ -52,340 +52,430 @@ export default function Sidebar({
   isCollapsed,
   onToggleCollapse,
 }) {
-  const [repoMenuOpen, setRepoMenuOpen] = useState(false);
-  const [repoFilter, setRepoFilter] = useState("");
-  const [chatSearch, setChatSearch] = useState("");
-  const dropdownRef = useRef(null);
-
-  useEffect(() => {
-    function handleClickOutside(event) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-        setRepoMenuOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  const [repoSearch, setRepoSearch] = useState("");
+  const [repoPendingDelete, setRepoPendingDelete] = useState(null);
 
   const filteredRepos = useMemo(() => {
-    const q = repoFilter.trim().toLowerCase();
+    const q = repoSearch.trim().toLowerCase();
     if (!q) return repos;
     return repos.filter(
       (r) =>
         formatRepoName(r.repo_url).toLowerCase().includes(q) ||
         (r.branch || "").toLowerCase().includes(q)
     );
-  }, [repos, repoFilter]);
+  }, [repos, repoSearch]);
 
-  const filteredConversations = useMemo(() => {
-    const q = chatSearch.trim().toLowerCase();
-    if (!q) return conversations;
-    return conversations.filter((c) =>
-      (c.title || "New chat").toLowerCase().includes(q)
-    );
-  }, [conversations, chatSearch]);
+  const isLocalRepo = (url) => {
+    const str = String(url || "").toLowerCase();
+    return str === "local" || str.includes("local/codebase-copilot");
+  };
 
-  const conversationGroups = useMemo(
-    () => groupConversationsByDate(filteredConversations),
-    [filteredConversations]
-  );
+  const handleConfirmDelete = async () => {
+    if (!repoPendingDelete || !onDeleteRepo) return;
+    await onDeleteRepo(repoPendingDelete);
+    setRepoPendingDelete(null);
+  };
 
   return (
-    <aside className={`sidebar ${isCollapsed ? "collapsed" : ""}`}>
-      {/* Brand Header */}
-      <div className="sidebar-brand">
-        <div className="brand-identity">
-          <div className="brand-logo">
-            <Code2 size={18} strokeWidth={2.2} />
+    <TooltipProvider delayDuration={180}>
+      <aside
+        className={cn(
+          "sidebar-instrument flex h-screen flex-col border-r border-border transition-all duration-300 select-none shrink-0",
+          isCollapsed
+            ? "w-0 min-w-0 overflow-hidden border-r-0 opacity-0 pointer-events-none"
+            : "w-[300px] min-w-[300px]"
+        )}
+      >
+        {/* Top Instrument Plate Header */}
+        <div className="border-b border-border px-4 pt-4 pb-3.5">
+          <div className="mb-1 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+            <span>UNIT // CB-COPILOT</span>
+            <span>REV 2.4</span>
           </div>
-          <div className="brand-text">
-            <span className="brand-title">Codebase Copilot</span>
-            <span className="brand-badge">Workspace</span>
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-xs">
+                <Terminal className="h-4 w-4" strokeWidth={2.2} />
+              </div>
+              <div className="flex items-baseline gap-1.5">
+                <span className="font-display text-base font-bold tracking-tight text-foreground">
+                  Codebase
+                </span>
+                <span className="font-serif text-lg italic text-primary">
+                  Copilot
+                </span>
+              </div>
+            </div>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 rounded-md text-muted-foreground hover:text-foreground"
+                  onClick={onToggleCollapse}
+                  aria-label="Collapse repository dock"
+                >
+                  <PanelLeftClose className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">Collapse dock</TooltipContent>
+            </Tooltip>
           </div>
         </div>
-        <button
-          type="button"
-          className="icon-button subtle"
-          onClick={onToggleCollapse}
-          title="Collapse sidebar"
-          aria-label="Collapse sidebar"
-        >
-          <PanelLeftClose size={17} />
-        </button>
-      </div>
 
-      {/* Repository Switcher */}
-      <div className="repo-switcher-container" ref={dropdownRef}>
-        <div className="section-caption">
-          <span>Active Repository</span>
-          <button
-            type="button"
-            className="caption-action"
+        {/* Primary Action & Filter Controls */}
+        <div className="flex flex-col gap-2.5 border-b border-border bg-muted/35 p-3.5">
+          <Button
+            variant="default"
             onClick={onOpenIngestModal}
-            title="Index a new repository"
+            className="group relative w-full justify-between overflow-hidden rounded-md px-3.5 py-2 font-display text-xs font-semibold tracking-tight shadow-xs transition-transform active:scale-[0.99]"
           >
-            <Plus size={13} />
-            <span>Add Repo</span>
-          </button>
-        </div>
+            <span className="flex items-center gap-2">
+              <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" />
+              <span>Mount Repository</span>
+            </span>
+            <span className="rounded bg-black/15 px-1.5 py-0.5 font-mono text-[10px] tracking-wider uppercase">
+              +INDEX
+            </span>
+          </Button>
 
-        <button
-          type="button"
-          className={`repo-switcher-trigger ${repoMenuOpen ? "open" : ""}`}
-          onClick={() => setRepoMenuOpen((prev) => !prev)}
-        >
-          <div className="repo-trigger-left">
-            <div className="repo-icon-box">
-              <FolderGit2 size={16} />
-            </div>
-            <div className="repo-trigger-details">
-              <div className="repo-trigger-name">
-                {activeRepo
-                  ? formatRepoName(activeRepo.repo_url)
-                  : "Select a repository"}
-              </div>
-              <div className="repo-trigger-meta">
-                {activeRepo ? (
-                  <>
-                    <GitBranch size={11} />
-                    <span>{activeRepo.branch || "main"}</span>
-                  </>
-                ) : (
-                  <span>{repos.length ? `${repos.length} available` : "No repositories indexed"}</span>
-                )}
-              </div>
-            </div>
-          </div>
-          <ChevronDown
-            size={15}
-            className={`chevron-icon ${repoMenuOpen ? "rotated" : ""}`}
-          />
-        </button>
-
-        {repoMenuOpen && (
-          <div className="repo-dropdown-popover">
-            {repos.length > 3 && (
-              <div className="dropdown-search">
-                <Search size={14} className="search-icon" />
-                <input
-                  type="text"
-                  placeholder="Filter repositories..."
-                  value={repoFilter}
-                  onChange={(e) => setRepoFilter(e.target.value)}
-                  autoFocus
-                />
-              </div>
-            )}
-
-            <div className="dropdown-list">
-              {filteredRepos.length === 0 ? (
-                <div className="dropdown-empty">No matching repositories</div>
-              ) : (
-                filteredRepos.map((repo) => {
-                  const isSelected = activeRepo && repo.id === activeRepo.id;
-                  return (
-                    <button
-                      type="button"
-                      key={repo.id}
-                      className={`dropdown-repo-item ${isSelected ? "selected" : ""}`}
-                      onClick={() => {
-                        onSelectRepo(repo);
-                        setRepoMenuOpen(false);
-                        setRepoFilter("");
-                      }}
-                    >
-                      <div className="dropdown-repo-main">
-                        <span className="dropdown-repo-name">
-                          {formatRepoName(repo.repo_url)}
-                        </span>
-                        <span className="dropdown-repo-branch">
-                          <GitBranch size={11} />
-                          {repo.branch || "main"}
-                        </span>
-                      </div>
-                      {isSelected && <Check size={15} className="check-icon" />}
-                    </button>
-                  );
-                })
-              )}
-            </div>
-
-            <div className="dropdown-footer">
-              {activeRepo && (
+          {repos.length > 0 && (
+            <div className="relative flex items-center">
+              <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder="Filter mounted repos..."
+                value={repoSearch}
+                onChange={(e) => setRepoSearch(e.target.value)}
+                className="h-8 rounded-md bg-card pl-8 pr-7 font-mono text-[11.5px]"
+              />
+              {repoSearch && (
                 <button
                   type="button"
-                  className="dropdown-action-btn secondary"
-                  onClick={() => {
-                    setRepoMenuOpen(false);
-                    onReindexRepo();
-                  }}
-                  disabled={isReindexing}
+                  onClick={() => setRepoSearch("")}
+                  className="absolute right-2 text-muted-foreground hover:text-foreground cursor-pointer"
+                  aria-label="Clear filter"
                 >
-                  <RefreshCw size={14} className={isReindexing ? "spin" : ""} />
-                  <span>{isReindexing ? "Syncing..." : "Sync Changes"}</span>
+                  <X className="h-3.5 w-3.5" />
                 </button>
               )}
-              <button
-                type="button"
-                className="dropdown-action-btn primary"
-                onClick={() => {
-                  setRepoMenuOpen(false);
-                  onOpenIngestModal();
-                }}
-              >
-                <Plus size={14} />
-                <span>Connect Repository</span>
-              </button>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
 
-      {/* Primary New Chat + Search Bar */}
-      <div className="sidebar-controls">
-        <button
-          type="button"
-          className="new-chat-primary-btn"
-          onClick={onNewChat}
-          disabled={!activeRepo || isCreatingChat}
-        >
-          <span className="btn-left">
-            <Plus size={16} strokeWidth={2.3} />
-            <span>New Conversation</span>
+        {/* Registry Section Header */}
+        <div className="flex items-center justify-between px-4 pt-3.5 pb-2">
+          <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Mounted Repositories
           </span>
-          <kbd className="kbd-badge">New</kbd>
-        </button>
-
-        {conversations.length > 0 && (
-          <div className="sidebar-search">
-            <Search size={14} className="sidebar-search-icon" />
-            <input
-              type="text"
-              placeholder="Search conversations..."
-              value={chatSearch}
-              onChange={(e) => setChatSearch(e.target.value)}
-            />
-            {chatSearch && (
-              <button
-                type="button"
-                className="clear-search-btn"
-                onClick={() => setChatSearch("")}
-                aria-label="Clear search"
-              >
-                <X size={13} />
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Conversations Thread List */}
-      <div className="sidebar-chats-scroll">
-        {!activeRepo ? (
-          <div className="sidebar-empty-state">
-            <div className="empty-icon-circle">
-              <FolderGit2 size={18} />
-            </div>
-            <p className="empty-title">No repository selected</p>
-            <p className="empty-desc">
-              Connect a GitHub repository or index your local workspace to start chatting.
-            </p>
-            <button
-              type="button"
-              className="empty-cta-btn"
-              onClick={onOpenIngestModal}
-            >
-              <Plus size={14} />
-              <span>Connect Repository</span>
-            </button>
-          </div>
-        ) : conversationGroups.length === 0 ? (
-          <div className="sidebar-empty-state">
-            <div className="empty-icon-circle">
-              <Sparkles size={18} />
-            </div>
-            <p className="empty-title">
-              {chatSearch ? "No matching chats" : "No conversations yet"}
-            </p>
-            <p className="empty-desc">
-              {chatSearch
-                ? "Try a different search term."
-                : "Ask a question in the workspace to start your first thread."}
-            </p>
-          </div>
-        ) : (
-          conversationGroups.map((group) => (
-            <div key={group.label} className="chat-group">
-              <div className="chat-group-header">{group.label}</div>
-              <div className="chat-group-items">
-                {group.items.map((chat) => {
-                  const isActive = chat.id === activeConversationId;
-                  return (
-                    <button
-                      type="button"
-                      key={chat.id}
-                      className={`chat-thread-item ${isActive ? "active" : ""}`}
-                      onClick={() => onSelectConversation(chat.id)}
-                    >
-                      <MessageSquare
-                        size={15}
-                        className="chat-thread-icon"
-                        strokeWidth={isActive ? 2.2 : 1.8}
-                      />
-                      <span className="chat-thread-title">
-                        {chat.title || "New conversation"}
-                      </span>
-                      <span className="chat-thread-time">
-                        {formatRelativeTime(chat.updated_at || chat.created_at)}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-
-      {/* Sidebar Footer */}
-      <div className="sidebar-footer">
-        <div className="system-status" title={health.ok ? "All services operational" : "Configuration required"}>
-          <span
-            className={`status-dot ${
-              health.loading ? "loading" : health.ok ? "online" : "warning"
-            }`}
-          />
-          <span className="status-label">
-            {health.loading
-              ? "Connecting..."
-              : health.ok
-              ? "Workspace Ready"
-              : "Setup Needed"}
+          <span className="rounded border border-border bg-muted px-1.5 py-0.2 font-mono text-[10px] font-medium text-foreground">
+            {String(repos.length).padStart(2, "0")}
           </span>
         </div>
 
-        <button
-          type="button"
-          className="theme-toggle-btn"
-          onClick={onToggleTheme}
-          title={
-            theme === "light" ? "Switch to dark mode" : "Switch to light mode"
-          }
-          aria-label="Toggle color theme"
-        >
-          {theme === "light" ? (
-            <>
-              <Moon size={14} />
-              <span>Dark</span>
-            </>
+        {/* Indexed Repositories Registry */}
+        <ScrollArea className="flex-1 px-3.5 py-1">
+          {repos.length === 0 ? (
+            <div className="my-4 rounded-lg border border-dashed border-border bg-card/70 p-5 text-center">
+              <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-md border border-primary/25 bg-primary/10 text-primary">
+                <FolderGit2 className="h-4 w-4" />
+              </div>
+              <p className="font-display text-xs font-semibold text-foreground">
+                No repositories mounted
+              </p>
+              <p className="mt-1 mb-3.5 text-xs leading-relaxed text-muted-foreground">
+                Connect a GitHub URL or mount your local project directory to start inspecting code.
+              </p>
+              <Button
+                size="sm"
+                onClick={onOpenIngestModal}
+                className="w-full font-mono text-[11px]"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>MOUNT FIRST REPO</span>
+              </Button>
+            </div>
+          ) : filteredRepos.length === 0 ? (
+            <div className="my-4 rounded-lg border border-dashed border-border bg-card/70 p-5 text-center">
+              <p className="font-mono text-xs font-medium text-foreground">
+                0 MATCHES
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                No mounted repository matches your filter.
+              </p>
+            </div>
           ) : (
-            <>
-              <Sun size={14} />
-              <span>Light</span>
-            </>
+            <div className="flex flex-col gap-2 pb-4">
+              {filteredRepos.map((repo, index) => {
+                const isSelected = activeRepo && repo.id === activeRepo.id;
+                const isDeletingThis = deletingRepoId === repo.id;
+                const local = isLocalRepo(repo.repo_url);
+                const RepoIcon = local ? Laptop : FolderGit2;
+                const indexCode = String(index + 1).padStart(2, "0");
+
+                return (
+                  <motion.div
+                    key={repo.id}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{
+                      duration: 0.28,
+                      delay: Math.min(index * 0.045, 0.25),
+                      ease: [0.16, 1, 0.3, 1],
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onSelectRepo(repo)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onSelectRepo(repo);
+                      }
+                    }}
+                    className={cn(
+                      "tactile-card group relative flex items-center gap-3 overflow-hidden rounded-lg border p-3 text-left transition-all cursor-pointer",
+                      isSelected
+                        ? "border-primary/50 bg-card"
+                        : "border-border bg-card/65 hover:border-foreground/25 hover:bg-card"
+                    )}
+                  >
+                    {isSelected && (
+                      <motion.div
+                        layoutId="active-repo-indicator"
+                        className="absolute left-0 top-0 bottom-0 w-1 bg-primary"
+                        transition={{
+                          type: "spring",
+                          stiffness: 380,
+                          damping: 30,
+                        }}
+                      />
+                    )}
+
+                    <div className="flex flex-col items-center gap-1 shrink-0">
+                      <span
+                        className={cn(
+                          "font-mono text-[9.5px] font-semibold tracking-wider",
+                          isSelected
+                            ? "text-primary"
+                            : "text-muted-foreground/70"
+                        )}
+                      >
+                        {indexCode}
+                      </span>
+                      <div
+                        className={cn(
+                          "flex h-7 w-7 items-center justify-center rounded border transition-colors",
+                          isSelected
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-border bg-muted/60 text-muted-foreground group-hover:text-foreground"
+                        )}
+                      >
+                        <RepoIcon className="h-3.5 w-3.5" />
+                      </div>
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <div
+                        className={cn(
+                          "truncate font-display text-[13px] font-semibold tracking-tight",
+                          isSelected ? "text-foreground" : "text-foreground/90"
+                        )}
+                      >
+                        {formatRepoName(repo.repo_url)}
+                      </div>
+
+                      <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[10.5px] text-muted-foreground">
+                        <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-foreground/80">
+                          <GitBranch className="h-2.5 w-2.5 text-primary" />
+                          {repo.branch || "main"}
+                        </span>
+                        {repo.indexed_at && (
+                          <span className="inline-flex items-center gap-1">
+                            <Clock className="h-2.5 w-2.5" />
+                            {formatRelativeTime(repo.indexed_at)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Repository Card Actions (Sync + Delete) */}
+                    <div className="flex shrink-0 items-center gap-1">
+                      {isSelected && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-7 w-7 rounded-md bg-background"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onReindexRepo();
+                              }}
+                              disabled={isReindexing || isDeletingThis}
+                              aria-label="Sync repository changes"
+                            >
+                              <RefreshCw
+                                className={cn(
+                                  "h-3.5 w-3.5",
+                                  isReindexing && "animate-spin text-primary"
+                                )}
+                              />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top">
+                            Sync incremental changes
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className={cn(
+                              "h-7 w-7 rounded-md text-muted-foreground hover:bg-destructive/15 hover:text-destructive transition-opacity",
+                              isSelected
+                                ? "opacity-100"
+                                : "opacity-0 group-hover:opacity-100 focus:opacity-100"
+                            )}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRepoPendingDelete(repo);
+                            }}
+                            disabled={isDeletingThis}
+                            aria-label={`Delete ${formatRepoName(repo.repo_url)}`}
+                          >
+                            {isDeletingThis ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin text-destructive" />
+                            ) : (
+                              <Trash2 className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top">
+                          Delete repository
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
           )}
-        </button>
-      </div>
-    </aside>
+        </ScrollArea>
+
+        {/* Telemetry & Surface Mode Footer */}
+        <div className="flex items-center justify-between border-t border-border bg-muted/35 px-3.5 py-2.5">
+          <div className="flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-wider text-muted-foreground">
+            <span
+              className={cn(
+                "h-2 w-2 rounded-full",
+                health.loading
+                  ? "bg-primary animate-pulse"
+                  : health.ok
+                  ? "bg-emerald-600 dark:bg-emerald-400 shadow-[0_0_0_3px_rgba(16,185,129,0.18)]"
+                  : "bg-amber-500 shadow-[0_0_0_3px_rgba(245,158,11,0.2)]"
+              )}
+            />
+            <span>
+              {health.loading
+                ? "SYNCING..."
+                : health.ok
+                ? "SYS // ONLINE"
+                : "SYS // CHECK"}
+            </span>
+          </div>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onToggleTheme}
+            className="h-7 gap-1.5 rounded-md bg-card px-2.5 font-mono text-[10.5px] uppercase tracking-wider"
+            aria-label="Toggle surface theme"
+          >
+            {theme === "light" ? (
+              <>
+                <Moon className="h-3 w-3 text-primary" />
+                <span>Carbon</span>
+              </>
+            ) : (
+              <>
+                <Sun className="h-3 w-3 text-primary" />
+                <span>Paper</span>
+              </>
+            )}
+          </Button>
+        </div>
+
+        {/* Delete Repository Confirmation Dialog */}
+        <Dialog
+          open={Boolean(repoPendingDelete)}
+          onOpenChange={(open) => {
+            if (!open && !deletingRepoId) setRepoPendingDelete(null);
+          }}
+        >
+          <DialogContent className="sm:max-w-[430px] rounded-xl border-border bg-card">
+            <DialogHeader>
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-destructive/30 bg-destructive/10 text-destructive">
+                  <AlertTriangle className="h-5 w-5" />
+                </div>
+                <div className="text-left">
+                  <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-destructive">
+                    DESTRUCTIVE ACTION // UNMOUNT
+                  </div>
+                  <DialogTitle className="font-display text-base font-bold">
+                    Delete Repository?
+                  </DialogTitle>
+                </div>
+              </div>
+              <DialogDescription className="pt-2 text-left text-xs leading-relaxed">
+                This will permanently remove{" "}
+                <span className="font-mono font-semibold text-foreground">
+                  {repoPendingDelete
+                    ? formatRepoName(repoPendingDelete.repo_url)
+                    : ""}
+                </span>{" "}
+                along with its indexed code symbols and saved conversation threads.
+              </DialogDescription>
+            </DialogHeader>
+
+            <DialogFooter className="mt-2 gap-2 sm:gap-0">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setRepoPendingDelete(null)}
+                disabled={Boolean(deletingRepoId)}
+                className="font-mono text-xs uppercase"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={handleConfirmDelete}
+                disabled={Boolean(deletingRepoId)}
+                className="font-mono text-xs uppercase tracking-wider"
+              >
+                {deletingRepoId ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span>DELETING...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>DELETE REPOSITORY</span>
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </aside>
+    </TooltipProvider>
   );
 }
