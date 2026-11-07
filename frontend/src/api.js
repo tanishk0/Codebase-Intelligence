@@ -36,6 +36,12 @@ export async function fetchRepositories() {
   return data.repos || [];
 }
 
+export async function deleteRepository(repoId) {
+  return apiFetch(`/api/repos/${encodeURIComponent(repoId)}`, {
+    method: "DELETE",
+  });
+}
+
 export async function fetchConversations(repoId) {
   const data = await apiFetch(`/api/repos/${encodeURIComponent(repoId)}/conversations`);
   return data.conversations || [];
