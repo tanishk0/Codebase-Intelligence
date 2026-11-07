@@ -192,7 +192,7 @@ async def lifespan(_app: FastAPI):
         worker_task.cancel()
 
 
-app = FastAPI(title="Codebase Copilot API", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Arcline API", version="0.2.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
