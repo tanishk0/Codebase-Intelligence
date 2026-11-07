@@ -563,11 +563,17 @@ def chat_with_repo_stream(req: ChatRequest) -> StreamingResponse:
 
 
 FRONTEND_DIR.mkdir(parents=True, exist_ok=True)
+FRONTEND_DIST_DIR = FRONTEND_DIR / "dist"
+if (FRONTEND_DIST_DIR / "assets").is_dir():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST_DIR / "assets")), name="assets")
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
 
 @app.get("/")
 def serve_frontend() -> FileResponse:
+    dist_index = FRONTEND_DIST_DIR / "index.html"
+    if dist_index.is_file():
+        return FileResponse(str(dist_index))
     return FileResponse(str(FRONTEND_DIR / "index.html"))
 
 
