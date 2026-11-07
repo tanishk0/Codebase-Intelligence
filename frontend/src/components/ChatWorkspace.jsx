@@ -1,12 +1,11 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { motion } from "motion/react";
 import {
   PanelLeftOpen,
   RefreshCw,
   Plus,
   GitBranch,
-  FolderGit2,
-  ArrowUp,
+  ArrowRight,
   ArrowDown,
   Compass,
   Layers,
@@ -15,25 +14,9 @@ import {
   AlertTriangle,
   Loader2,
   History,
-  MessageSquare,
-  ChevronDown,
-  Search,
-  Check,
-  X,
-  CornerDownLeft,
+  Laptop,
+  AlertCircle,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   Tooltip,
   TooltipContent,
@@ -42,15 +25,29 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import MessageItem from "./MessageItem";
-import {
-  formatRepoName,
-  formatRelativeTime,
-  groupConversationsByDate,
-} from "../api";
+import { formatRepoName } from "../api";
+
+function GitHubIcon({ className = "h-5 w-5" }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 15 15"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <path
+        d="M7.49933 0.25C3.49635 0.25 0.25 3.49593 0.25 7.50024C0.25 10.703 2.32715 13.4206 5.2081 14.3797C5.57084 14.446 5.70302 14.2222 5.70302 14.0299C5.70302 13.8576 5.69679 13.4019 5.69323 12.797C3.67661 13.235 3.25112 11.825 3.25112 11.825C2.92132 10.9874 2.44599 10.7644 2.44599 10.7644C1.78773 10.3149 2.49584 10.3238 2.49584 10.3238C3.22353 10.375 3.60629 11.0711 3.60629 11.0711C4.25298 12.1788 5.30335 11.8588 5.71638 11.6732C5.78225 11.205 5.96962 10.8854 6.17658 10.7043C4.56675 10.5209 2.87415 9.89918 2.87415 7.12104C2.87415 6.32925 3.15677 5.68257 3.62053 5.17563C3.54576 4.99226 3.29697 4.25521 3.69174 3.25691C3.69174 3.25691 4.30015 3.06196 5.68522 3.99973C6.26337 3.83906 6.8838 3.75895 7.50022 3.75583C8.1162 3.75895 8.73619 3.83906 9.31523 3.99973C10.6994 3.06196 11.3069 3.25691 11.3069 3.25691C11.7026 4.25521 11.4538 4.99226 11.3795 5.17563C11.8441 5.68257 12.1245 6.32925 12.1245 7.12104C12.1245 9.9063 10.4292 10.5192 8.81452 10.6985C9.07444 10.9224 9.30633 11.3648 9.30633 12.0413C9.30633 13.0102 9.29742 13.7922 9.29742 14.0299C9.29742 14.2239 9.42828 14.4496 9.79591 14.3788C12.6746 13.4179 14.75 10.7025 14.75 7.50024C14.75 3.49593 11.5036 0.25 7.49933 0.25Z"
+        fill="currentColor"
+        fillRule="evenodd"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
 
 const STARTER_PROMPTS = [
   {
-    code: "01 // TOPOLOGY",
     icon: Compass,
     title: "System Topology & Modules",
     desc: "Map out the architectural boundaries and how core packages collaborate",
@@ -58,7 +55,6 @@ const STARTER_PROMPTS = [
       "What does this repository do and how are the core modules organized?",
   },
   {
-    code: "02 // EXECUTION",
     icon: Workflow,
     title: "Primary Data & Execution Path",
     desc: "Trace an end-to-end request from entry point through storage",
@@ -66,7 +62,6 @@ const STARTER_PROMPTS = [
       "Walk me through the primary data flow and key entry points in this codebase.",
   },
   {
-    code: "03 // ABSTRACTIONS",
     icon: Layers,
     title: "Domain Models & Contracts",
     desc: "Examine the central classes, interfaces, and state invariants",
@@ -74,7 +69,6 @@ const STARTER_PROMPTS = [
       "What are the most important classes and abstractions in this project, and what are their responsibilities?",
   },
   {
-    code: "04 // RESILIENCE",
     icon: ShieldCheck,
     title: "Fault Tolerance & Guardrails",
     desc: "Audit error recovery, boundary validation, and retry strategies",
@@ -85,10 +79,7 @@ const STARTER_PROMPTS = [
 
 export default function ChatWorkspace({
   activeRepo,
-  conversations,
   activeConversation,
-  activeConversationId,
-  onSelectConversation,
   messages,
   loadingConversation,
   hasMoreMessages,
@@ -100,31 +91,32 @@ export default function ChatWorkspace({
   isCreatingChat,
   onReindexRepo,
   isReindexing,
-  onOpenIngestModal,
+  onIngestRepository,
+  isIngesting,
+  ingestError,
   health,
   isSidebarCollapsed,
   onExpandSidebar,
 }) {
   const [input, setInput] = useState("");
   const [showScrollBottom, setShowScrollBottom] = useState(false);
-  const [chatSearch, setChatSearch] = useState("");
+
+  // Inline repository ingestion state when no repo is mounted
+  const [inlineRepoUrl, setInlineRepoUrl] = useState("");
+  const [inlineBranch, setInlineBranch] = useState("");
 
   const messagesContainerRef = useRef(null);
   const textareaRef = useRef(null);
   const prevScrollHeightRef = useRef(null);
 
-  const filteredConversations = useMemo(() => {
-    const q = chatSearch.trim().toLowerCase();
-    if (!q) return conversations;
-    return conversations.filter((c) =>
-      (c.title || "New chat").toLowerCase().includes(q)
+  const isLocalRepo = (url) => {
+    const str = String(url || "").toLowerCase();
+    return (
+      str === "local" ||
+      str.includes("local/codebase-copilot") ||
+      str.includes("local/arcline")
     );
-  }, [conversations, chatSearch]);
-
-  const conversationGroups = useMemo(
-    () => groupConversationsByDate(filteredConversations),
-    [filteredConversations]
-  );
+  };
 
   const scrollToBottom = useCallback((behavior = "smooth") => {
     const el = messagesContainerRef.current;
@@ -151,7 +143,7 @@ export default function ChatWorkspace({
     const ta = textareaRef.current;
     if (!ta) return;
     ta.style.height = "auto";
-    ta.style.height = `${Math.min(ta.scrollHeight, 180)}px`;
+    ta.style.height = `${Math.min(ta.scrollHeight, 140)}px`;
   }, [input]);
 
   const handleScroll = () => {
@@ -193,259 +185,116 @@ export default function ChatWorkspace({
     }
   };
 
-  const activeTitle = activeConversation?.title || "Untitled Session";
+  const handleInlineRepoSubmit = async (e) => {
+    e.preventDefault();
+    const trimmed = inlineRepoUrl.trim();
+    if (!trimmed || isIngesting || !onIngestRepository) return;
+    await onIngestRepository({
+      repoUrl: trimmed,
+      branch: inlineBranch.trim() || null,
+      llmSummaries: false,
+    });
+  };
+
+  const handleMountLocalWorkspace = async () => {
+    if (isIngesting || !onIngestRepository) return;
+    await onIngestRepository({
+      repoUrl: "local",
+      branch: "main",
+      llmSummaries: false,
+    });
+  };
+
+  const activeTitle = activeConversation?.title || "New thread";
 
   return (
     <TooltipProvider delayDuration={180}>
-      <main className="drafting-canvas relative flex h-screen min-w-0 flex-1 flex-col">
-        {/* Top Instrument Control Bar */}
-        <header className="z-10 flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border bg-card/85 px-6 backdrop-blur-md">
-          <div className="flex min-w-0 items-center gap-3">
+      <main className="landing-dark-canvas relative flex h-screen min-w-0 flex-1 flex-col bg-[#0B0F16] text-[#E5E7EB]">
+        {/* Minimal Top Header Bar */}
+        <header className="z-10 flex h-12 shrink-0 items-center justify-between gap-4 border-b border-[#1E2636] bg-[#0B0F16]/85 px-5 backdrop-blur-md">
+          <div className="flex min-w-0 items-center gap-2.5">
             {isSidebarCollapsed && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    className="h-8 w-8 shrink-0 rounded-md bg-background"
+                  <button
+                    type="button"
                     onClick={onExpandSidebar}
-                    aria-label="Open repository dock"
+                    aria-label="Expand sidebar"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-[#9CA3AF] transition-colors hover:bg-[#1A2232] hover:text-white cursor-pointer"
                   >
                     <PanelLeftOpen className="h-4 w-4" />
-                  </Button>
+                  </button>
                 </TooltipTrigger>
-                <TooltipContent side="bottom">Open repo dock</TooltipContent>
+                <TooltipContent side="bottom">Expand sidebar</TooltipContent>
               </Tooltip>
             )}
 
-            <div className="flex min-w-0 flex-wrap items-center gap-2.5">
-              {activeRepo ? (
-                <>
-                  <span className="hidden rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-primary sm:inline-block">
-                    TARGET
-                  </span>
-                  <div className="flex items-center gap-2 font-display text-sm font-bold tracking-tight text-foreground">
-                    <FolderGit2 className="h-4 w-4 text-primary" />
-                    <span className="truncate">
-                      {formatRepoName(activeRepo.repo_url)}
-                    </span>
-                  </div>
-                  <Badge
-                    variant="outline"
-                    className="rounded bg-muted/70 font-mono text-[10.5px] font-medium"
-                  >
-                    <GitBranch className="h-3 w-3 text-primary" />
-                    <span>{activeRepo.branch || "main"}</span>
-                  </Badge>
-                </>
-              ) : (
-                <h1 className="font-mono text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                  WORKSPACE // STANDBY
-                </h1>
-              )}
-            </div>
+            {activeRepo ? (
+              <div className="flex min-w-0 items-center gap-2 font-inter text-[13px]">
+                {isLocalRepo(activeRepo.repo_url) ? (
+                  <Laptop className="h-3.5 w-3.5 shrink-0 text-[#7DB4FF]" />
+                ) : (
+                  <GitHubIcon className="h-3.5 w-3.5 shrink-0 text-[#9CA3AF]" />
+                )}
+                <span className="truncate font-medium text-[#F3F4F6]">
+                  {formatRepoName(activeRepo.repo_url)}
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-[5px] border border-[#243041] bg-[#141A26] px-1.5 py-0.5 font-mono text-[10.5px] text-[#9CA3AF]">
+                  <GitBranch className="h-2.5 w-2.5 text-[#7DB4FF]" />
+                  <span>{activeRepo.branch || "main"}</span>
+                </span>
+                <span className="hidden text-[#374151] sm:inline">/</span>
+                <span className="hidden truncate text-[#9CA3AF] sm:inline">
+                  {activeTitle}
+                </span>
+              </div>
+            ) : (
+              <span className="font-inter text-[13px] font-medium text-[#9CA3AF]">
+                Workspace
+              </span>
+            )}
           </div>
 
-          {/* Right Side: Contained Session Archive Dropdown + Sync + New Session */}
           {activeRepo && (
             <div className="flex shrink-0 items-center gap-2">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="max-w-[260px] gap-2 rounded-md bg-background font-medium"
-                  >
-                    <MessageSquare className="h-3.5 w-3.5 text-primary shrink-0" />
-                    <span className="truncate text-xs">{activeTitle}</span>
-                    {conversations.length > 0 && (
-                      <span className="rounded bg-muted px-1.5 py-0.2 font-mono text-[10px] text-muted-foreground">
-                        {String(conversations.length).padStart(2, "0")}
-                      </span>
-                    )}
-                    <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                  </Button>
-                </DropdownMenuTrigger>
-
-                <DropdownMenuContent align="end" className="w-80 rounded-lg p-2">
-                  <div className="flex items-center justify-between px-2 py-1">
-                    <span className="truncate font-mono text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
-                      Session Archive
-                    </span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 gap-1 rounded px-2 font-mono text-[10.5px] font-semibold text-primary hover:text-primary"
-                      onClick={onNewChat}
-                      disabled={isCreatingChat || isSending}
-                    >
-                      <Plus className="h-3 w-3" />
-                      <span>NEW THREAD</span>
-                    </Button>
-                  </div>
-
-                  <DropdownMenuSeparator />
-
-                  {conversations.length > 3 && (
-                    <div
-                      className="relative my-1.5 px-1"
-                      onKeyDown={(e) => e.stopPropagation()}
-                    >
-                      <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
-                      <Input
-                        type="text"
-                        placeholder="Search sessions..."
-                        value={chatSearch}
-                        onChange={(e) => setChatSearch(e.target.value)}
-                        className="h-8 rounded pl-8 pr-7 font-mono text-xs"
-                      />
-                      {chatSearch && (
-                        <button
-                          type="button"
-                          onClick={() => setChatSearch("")}
-                          className="absolute right-3 top-2.5 text-muted-foreground hover:text-foreground"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="max-h-64 overflow-y-auto pr-0.5">
-                    {conversationGroups.length === 0 ? (
-                      <div className="py-6 text-center font-mono text-xs text-muted-foreground">
-                        {chatSearch
-                          ? "0 MATCHING SESSIONS"
-                          : "NO SAVED SESSIONS"}
-                      </div>
-                    ) : (
-                      conversationGroups.map((group) => (
-                        <div key={group.label} className="mb-2 last:mb-0">
-                          <DropdownMenuLabel className="px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-                            {group.label}
-                          </DropdownMenuLabel>
-                          {group.items.map((chat) => {
-                            const isSelected = chat.id === activeConversationId;
-                            return (
-                              <DropdownMenuItem
-                                key={chat.id}
-                                onSelect={() => {
-                                  onSelectConversation(chat.id);
-                                  setChatSearch("");
-                                }}
-                                className={cn(
-                                  "flex items-center justify-between gap-2 rounded-md px-2.5 py-2 text-xs",
-                                  isSelected &&
-                                    "bg-primary/10 font-semibold text-primary focus:bg-primary/15 focus:text-primary"
-                                )}
-                              >
-                                <div className="flex min-w-0 items-center gap-2">
-                                  <MessageSquare className="h-3.5 w-3.5 shrink-0 opacity-75" />
-                                  <span className="truncate">
-                                    {chat.title || "Untitled Session"}
-                                  </span>
-                                </div>
-                                <div className="flex shrink-0 items-center gap-1.5">
-                                  <span className="font-mono text-[10px] text-muted-foreground">
-                                    {formatRelativeTime(
-                                      chat.updated_at || chat.created_at
-                                    )}
-                                  </span>
-                                  {isSelected && (
-                                    <Check className="h-3.5 w-3.5 text-primary" />
-                                  )}
-                                </div>
-                              </DropdownMenuItem>
-                            );
-                          })}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </DropdownMenuContent>
-              </DropdownMenu>
-
-              <Button
-                variant="outline"
-                size="sm"
+              <button
+                type="button"
                 onClick={onReindexRepo}
                 disabled={isReindexing}
-                className="rounded-md bg-background font-mono text-[11px]"
                 title="Sync incremental file changes"
+                className="inline-flex items-center gap-1.5 rounded-[7px] border border-[#243041] bg-[#131822] px-2.5 py-1 font-inter text-[12px] font-medium text-[#D1D5DB] transition-colors hover:border-[#2E3B52] hover:bg-[#1A2232] hover:text-white disabled:opacity-50 cursor-pointer"
               >
                 <RefreshCw
                   className={cn(
-                    "h-3.5 w-3.5",
-                    isReindexing && "animate-spin text-primary"
+                    "h-3 w-3",
+                    isReindexing && "animate-spin text-[#7DB4FF]"
                   )}
                 />
-                <span>{isReindexing ? "SYNCING..." : "SYNC"}</span>
-              </Button>
+                <span>{isReindexing ? "Syncing..." : "Sync"}</span>
+              </button>
 
-              <Button
-                variant="default"
-                size="sm"
+              <button
+                type="button"
                 onClick={onNewChat}
                 disabled={isSending || isCreatingChat}
-                className="rounded-md font-display text-xs font-semibold"
+                className="inline-flex items-center gap-1.5 rounded-[7px] border border-[#263246] bg-[#172030] px-2.5 py-1 font-inter text-[12px] font-medium text-white transition-colors hover:bg-[#1E2A3F] disabled:opacity-50 cursor-pointer"
               >
                 <Plus className="h-3.5 w-3.5" />
-                <span>New Thread</span>
-              </Button>
+                <span>New chat</span>
+              </button>
             </div>
           )}
         </header>
 
-        {/* Contained In-Workspace Conversation Thread Tape */}
-        {activeRepo && conversations.length > 0 && (
-          <div className="z-10 shrink-0 border-b border-border bg-card/65 px-6 py-1.5 backdrop-blur-sm">
-            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
-              <span className="shrink-0 font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground pr-1">
-                THREADS //
-              </span>
-              {conversations.map((chat, idx) => {
-                const isActive = chat.id === activeConversationId;
-                return (
-                  <button
-                    type="button"
-                    key={chat.id}
-                    onClick={() => onSelectConversation(chat.id)}
-                    title={chat.title || "Untitled Session"}
-                    className={cn(
-                      "relative inline-flex max-w-[220px] shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors cursor-pointer",
-                      isActive
-                        ? "border-primary/45 bg-card text-foreground font-semibold shadow-xs"
-                        : "border-transparent text-muted-foreground hover:border-border hover:bg-card/60 hover:text-foreground"
-                    )}
-                  >
-                    <span className="font-mono text-[10px] text-primary">
-                      #{String(idx + 1).padStart(2, "0")}
-                    </span>
-                    <span className="truncate">
-                      {chat.title || "Untitled Session"}
-                    </span>
-                    {isActive && (
-                      <motion.span
-                        layoutId="active-thread-dot"
-                        className="ml-0.5 h-1.5 w-1.5 rounded-full bg-primary shrink-0"
-                      />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
         {/* Setup / Configuration Alert Banner */}
-        {!health.loading && !health.ok && health.issues?.length > 0 && (
-          <div className="mx-6 mt-4 flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+        {!health?.loading && !health?.ok && health?.issues?.length > 0 && (
+          <div className="mx-6 mt-4 flex items-start gap-3 rounded-[10px] border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
             <div>
-              <strong className="font-mono text-[11px] uppercase tracking-wider text-foreground">
+              <strong className="font-inter text-[12px] font-semibold text-white">
                 Environment Configuration Required
               </strong>
-              <ul className="mt-1 list-disc pl-4 text-muted-foreground">
+              <ul className="mt-1 list-disc pl-4 text-[#D1D5DB]">
                 {health.issues.map((issue, idx) => (
                   <li key={idx}>{issue}</li>
                 ))}
@@ -454,140 +303,182 @@ export default function ChatWorkspace({
           </div>
         )}
 
-        {/* Conversation Viewport */}
+        {/* Main Viewport */}
         <div
-          className="flex-1 overflow-y-auto px-6 pt-8 pb-4"
+          className="flex-1 overflow-y-auto px-5 pt-6 pb-4 landing-dark-code-scroll"
           ref={messagesContainerRef}
           onScroll={handleScroll}
         >
-          <div className="mx-auto flex min-h-full max-w-[840px] flex-col">
+          <div className="mx-auto flex min-h-full max-w-[780px] flex-col">
             {!activeRepo ? (
+              /* Inline "Enter a repo link" Empty State matching the screenshot */
               <motion.div
-                initial={{ opacity: 0, y: 14 }}
+                initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-                className="m-auto w-full max-w-xl rounded-xl border border-border bg-card/90 p-9 text-center tactile-card"
+                transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+                className="m-auto w-full max-w-[600px] py-8"
               >
-                <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg border border-primary/30 bg-primary/10 text-primary">
-                  <FolderGit2 className="h-6 w-6" strokeWidth={1.8} />
-                </div>
-                <div className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.2em] text-primary">
-                  SYSTEM STANDBY
-                </div>
-                <h2 className="mt-1 font-display text-3xl font-bold tracking-tight text-foreground">
-                  Mount a codebase{" "}
-                  <span className="font-serif font-normal italic text-primary">
-                    to begin.
-                  </span>
-                </h2>
-                <p className="mx-auto mt-2.5 mb-6 max-w-md text-sm leading-relaxed text-muted-foreground">
-                  Connect any GitHub repository or index your local workspace directory to inspect architecture, trace execution paths, and query implementation details.
-                </p>
-                <Button
-                  size="lg"
-                  onClick={onOpenIngestModal}
-                  className="rounded-md font-mono text-xs uppercase tracking-wider"
-                >
-                  <Plus className="h-4 w-4" />
-                  <span>Mount Repository</span>
-                </Button>
-              </motion.div>
-            ) : loadingConversation ? (
-              <div className="m-auto flex items-center gap-2.5 font-mono text-xs uppercase tracking-wider text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                <span>LOADING SESSION TRANSCRIPT...</span>
-              </div>
-            ) : messages.length === 0 ? (
-              <div className="m-auto w-full max-w-2xl py-6">
-                <motion.div
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.42, ease: [0.16, 1, 0.3, 1] }}
-                  className="mb-8 text-left"
-                >
-                  <div className="mb-2 inline-flex items-center gap-2 rounded border border-border bg-card px-2.5 py-1 font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground">
-                    <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                    <span>INSPECTING // {formatRepoName(activeRepo.repo_url)}</span>
-                  </div>
-
-                  <h2 className="font-display text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
-                    Interrogate the{" "}
-                    <span className="font-serif font-normal italic text-primary">
-                      architecture.
+                <div className="mb-6 text-center">
+                  <h2 className="font-inter text-[28px] font-medium tracking-[-0.025em] text-white sm:text-[34px]">
+                    Connect your{" "}
+                    <span className="font-fraunces italic font-normal text-[#7DB4FF]">
+                      repository
                     </span>
                   </h2>
-                  <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">
-                    Select a diagnostic blueprint below or enter a direct query to trace symbols, call graphs, and module boundaries across{" "}
-                    <span className="font-mono text-xs text-foreground">
+                  <p className="mx-auto mt-2 max-w-[440px] font-inter text-[14px] leading-relaxed text-[#9CA3AF]">
+                    Paste a GitHub repository link below to index AST symbols,
+                    trace call graphs, and query your codebase.
+                  </p>
+                </div>
+
+                {/* Screenshot-matched Repo Link Input Bar */}
+                <form onSubmit={handleInlineRepoSubmit} className="w-full">
+                  <div className="flex items-center gap-3.5 rounded-[8px] border border-[#2A3446] bg-[#10141D] px-4 py-2.5 shadow-[0_12px_36px_rgba(0,0,0,0.5)] transition-colors focus-within:border-[#7DB4FF]/70">
+                    <GitHubIcon className="h-5 w-5 shrink-0 text-[#E5E7EB]" />
+                    <input
+                      type="url"
+                      placeholder="Enter a repo link"
+                      value={inlineRepoUrl}
+                      onChange={(e) => setInlineRepoUrl(e.target.value)}
+                      disabled={isIngesting}
+                      required
+                      className="w-full bg-transparent font-inter text-[14px] text-[#E5E7EB] placeholder:text-[#6B7280] focus:outline-none"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isIngesting || !inlineRepoUrl.trim()}
+                      aria-label="Connect repository"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#E5E7EB] text-[#0B0F16] transition-all hover:bg-white disabled:opacity-40 cursor-pointer"
+                    >
+                      {isIngesting ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <ArrowRight className="h-4 w-4 stroke-[2]" />
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Secondary inline options: Optional branch + Mount local workspace */}
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 px-1 text-[12px] text-[#9CA3AF]">
+                    <div className="flex items-center gap-2">
+                      <GitBranch className="h-3.5 w-3.5 text-[#6B7280]" />
+                      <input
+                        type="text"
+                        placeholder="Branch (default: main)"
+                        value={inlineBranch}
+                        onChange={(e) => setInlineBranch(e.target.value)}
+                        disabled={isIngesting}
+                        className="w-40 rounded-[6px] border border-transparent bg-transparent px-1.5 py-0.5 font-mono text-[11.5px] text-[#D1D5DB] placeholder:text-[#6B7280] focus:border-[#243041] focus:bg-[#131822] focus:outline-none"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleMountLocalWorkspace}
+                      disabled={isIngesting}
+                      className="inline-flex items-center gap-1.5 font-inter text-[12px] text-[#9CA3AF] transition-colors hover:text-[#7DB4FF] disabled:opacity-40 cursor-pointer"
+                    >
+                      <Laptop className="h-3.5 w-3.5" />
+                      <span>Mount local workspace</span>
+                    </button>
+                  </div>
+                </form>
+
+                {isIngesting && (
+                  <div className="mt-4 flex items-center justify-center gap-2.5 rounded-[8px] border border-[#243041] bg-[#131822]/90 px-4 py-2.5 font-inter text-[12.5px] text-[#D1D5DB]">
+                    <Loader2 className="h-4 w-4 animate-spin text-[#7DB4FF]" />
+                    <span>
+                      Indexing repository AST symbols & vector embeddings...
+                    </span>
+                  </div>
+                )}
+
+                {ingestError && (
+                  <div className="mt-4 flex items-center gap-2 rounded-[8px] border border-red-500/35 bg-red-950/30 px-3.5 py-2.5 font-inter text-[12.5px] text-red-200">
+                    <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
+                    <span>{ingestError}</span>
+                  </div>
+                )}
+              </motion.div>
+            ) : loadingConversation ? (
+              <div className="m-auto flex items-center gap-2.5 font-inter text-[13px] text-[#9CA3AF]">
+                <Loader2 className="h-4 w-4 animate-spin text-[#7DB4FF]" />
+                <span>Loading conversation...</span>
+              </div>
+            ) : messages.length === 0 ? (
+              <div className="m-auto w-full max-w-[660px] py-6">
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+                  className="mb-7 text-center"
+                >
+                  <h2 className="font-inter text-[26px] font-medium tracking-[-0.025em] text-white sm:text-[32px]">
+                    Ask anything about{" "}
+                    <span className="font-fraunces italic font-normal text-[#7DB4FF]">
                       {formatRepoName(activeRepo.repo_url)}
                     </span>
-                    .
+                  </h2>
+                  <p className="mx-auto mt-2 max-w-[460px] font-inter text-[13.5px] leading-relaxed text-[#9CA3AF]">
+                    Trace execution paths, symbol definitions, and module
+                    boundaries with line-accurate file citations.
                   </p>
                 </motion.div>
 
-                <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {STARTER_PROMPTS.map((item, idx) => {
                     const IconComponent = item.icon;
                     return (
                       <motion.button
                         type="button"
                         key={item.title}
-                        initial={{ opacity: 0, y: 14 }}
+                        initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{
-                          duration: 0.38,
-                          delay: 0.08 + idx * 0.06,
+                          duration: 0.32,
+                          delay: 0.05 + idx * 0.05,
                           ease: [0.16, 1, 0.3, 1],
                         }}
                         onClick={() => !isSending && onSendMessage(item.prompt)}
                         disabled={isSending}
-                        className="tactile-card group relative flex flex-col justify-between rounded-lg border border-border bg-card/90 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary/55 cursor-pointer"
+                        className="group flex flex-col justify-between rounded-[10px] border border-[#1E2636] bg-[#111621]/90 p-4 text-left transition-all hover:border-[#2E3B52] hover:bg-[#161D2B] cursor-pointer"
                       >
-                        <div className="mb-3 flex w-full items-center justify-between">
-                          <span className="font-mono text-[10px] font-semibold tracking-widest text-muted-foreground group-hover:text-primary transition-colors">
-                            {item.code}
-                          </span>
-                          <div className="flex h-7 w-7 items-center justify-center rounded border border-border bg-muted/60 text-foreground group-hover:border-primary group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
-                            <IconComponent className="h-3.5 w-3.5" />
-                          </div>
-                        </div>
-
-                        <div>
-                          <div className="font-display text-sm font-bold tracking-tight text-foreground">
+                        <div className="mb-2.5 flex items-center justify-between">
+                          <span className="font-inter text-[13px] font-semibold text-[#F3F4F6] group-hover:text-white">
                             {item.title}
-                          </div>
-                          <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                            {item.desc}
-                          </div>
+                          </span>
+                          <IconComponent className="h-4 w-4 text-[#6B7280] transition-colors group-hover:text-[#7DB4FF]" />
                         </div>
+                        <p className="font-inter text-[12px] leading-relaxed text-[#9CA3AF]">
+                          {item.desc}
+                        </p>
                       </motion.button>
                     );
                   })}
                 </div>
               </div>
             ) : (
-              <div className="flex flex-col gap-6 pb-4">
+              <div className="flex flex-col gap-5 pb-4">
                 {hasMoreMessages && (
                   <div className="flex justify-center">
-                    <Button
-                      variant="outline"
-                      size="sm"
+                    <button
+                      type="button"
                       onClick={handleLoadOlderClick}
                       disabled={loadingOlderMessages}
-                      className="rounded-md bg-card font-mono text-[11px] text-muted-foreground"
+                      className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#243041] bg-[#131822] px-3 py-1.5 font-inter text-[12px] text-[#9CA3AF] transition-colors hover:bg-[#1A2232] hover:text-white cursor-pointer"
                     >
                       {loadingOlderMessages ? (
                         <>
-                          <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                          <span>FETCHING EARLIER LOGS...</span>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-[#7DB4FF]" />
+                          <span>Loading earlier messages...</span>
                         </>
                       ) : (
                         <>
-                          <History className="h-3.5 w-3.5 text-primary" />
-                          <span>LOAD EARLIER MESSAGES</span>
+                          <History className="h-3.5 w-3.5 text-[#7DB4FF]" />
+                          <span>Load earlier messages</span>
                         </>
                       )}
-                    </Button>
+                    </button>
                   </div>
                 )}
 
@@ -601,86 +492,57 @@ export default function ChatWorkspace({
 
         {/* Floating Scroll-to-Bottom Button */}
         {showScrollBottom && messages.length > 0 && (
-          <Button
-            variant="outline"
-            size="icon"
+          <button
+            type="button"
             onClick={() => scrollToBottom("smooth")}
-            className="absolute bottom-32 left-1/2 z-15 h-8 w-8 -translate-x-1/2 rounded-md bg-card shadow-md"
+            className="absolute bottom-24 left-1/2 z-20 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border border-[#243041] bg-[#131822] text-[#E5E7EB] shadow-lg transition-colors hover:bg-[#1A2232] cursor-pointer"
             title="Scroll to latest message"
             aria-label="Scroll to latest message"
           >
-            <ArrowDown className="h-4 w-4 text-primary" />
-          </Button>
+            <ArrowDown className="h-4 w-4 text-[#7DB4FF]" />
+          </button>
         )}
 
-        {/* Bottom Tactile Command Console */}
-        <div className="shrink-0 bg-gradient-to-b from-transparent via-background/80 to-background px-6 pt-2 pb-5">
-          <form
-            onSubmit={handleSubmit}
-            className="tactile-composer mx-auto max-w-[840px] rounded-xl border border-border bg-card p-3 transition-all focus-within:border-primary"
-          >
-            <Textarea
-              ref={textareaRef}
-              rows={1}
-              placeholder={
-                activeRepo
-                  ? `Query ${formatRepoName(activeRepo.repo_url)} architecture, symbols, or data flow...`
-                  : "Mount a repository first to begin querying..."
-              }
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              disabled={!activeRepo || isSending}
-              className="min-h-[38px] max-h-[180px] resize-none border-0 bg-transparent px-1.5 py-1 text-sm shadow-none focus-visible:ring-0"
-            />
+        {/* Bottom Chat Input Bar — Matching the Screenshot UI */}
+        {activeRepo && (
+          <div className="shrink-0 bg-gradient-to-t from-[#0B0F16] via-[#0B0F16]/95 to-transparent px-5 pt-2 pb-5">
+            <form
+              onSubmit={handleSubmit}
+              className="mx-auto flex w-full max-w-[780px] items-center gap-3.5 rounded-[8px] border border-[#2A3446] bg-[#10141D] px-4 py-2.5 shadow-[0_12px_36px_rgba(0,0,0,0.5)] transition-colors focus-within:border-[#7DB4FF]/70"
+            >
+              {isLocalRepo(activeRepo.repo_url) ? (
+                <Laptop className="h-5 w-5 shrink-0 text-[#9CA3AF]" />
+              ) : (
+                <GitHubIcon className="h-5 w-5 shrink-0 text-[#E5E7EB]" />
+              )}
 
-            <div className="mt-2 flex items-center justify-between gap-3 border-t border-border/80 pt-2">
-              <div className="flex flex-wrap items-center gap-2.5">
-                {activeRepo ? (
-                  <span className="inline-flex items-center gap-1.5 rounded border border-border bg-muted/60 px-2 py-0.5 font-mono text-[10.5px] text-foreground">
-                    <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                    <span className="max-w-[220px] truncate">{activeTitle}</span>
-                  </span>
-                ) : (
-                  <span className="rounded border border-border bg-muted/40 px-2 py-0.5 font-mono text-[10.5px] text-muted-foreground">
-                    NO REPO MOUNTED
-                  </span>
-                )}
-                <span className="hidden font-mono text-[10.5px] text-muted-foreground sm:inline">
-                  <kbd className="rounded border border-border bg-muted px-1 py-0.2 text-foreground">
-                    ENTER
-                  </kbd>{" "}
-                  SEND ·{" "}
-                  <kbd className="rounded border border-border bg-muted px-1 py-0.2 text-foreground">
-                    SHIFT+ENTER
-                  </kbd>{" "}
-                  NEWLINE
-                </span>
-              </div>
+              <textarea
+                ref={textareaRef}
+                rows={1}
+                placeholder={`Ask ${formatRepoName(activeRepo.repo_url)} a question...`}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                disabled={isSending}
+                className="max-h-[140px] min-h-[24px] flex-1 resize-none bg-transparent font-inter text-[14px] leading-6 text-[#E5E7EB] placeholder:text-[#6B7280] focus:outline-none landing-dark-code-scroll"
+              />
 
-              <Button
+              <button
                 type="submit"
-                size="sm"
-                className="h-8 gap-1.5 rounded-md px-3 font-mono text-[11px] font-semibold uppercase tracking-wider shrink-0"
-                disabled={!activeRepo || !input.trim() || isSending}
-                title="Transmit query"
-                aria-label="Transmit query"
+                disabled={!input.trim() || isSending}
+                title="Send message"
+                aria-label="Send message"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#E5E7EB] text-[#0B0F16] transition-all hover:bg-white disabled:opacity-35 cursor-pointer"
               >
                 {isSending ? (
-                  <>
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    <span>RUNNING</span>
-                  </>
+                  <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <>
-                    <span>ASK</span>
-                    <CornerDownLeft className="h-3.5 w-3.5" />
-                  </>
+                  <ArrowRight className="h-4 w-4 stroke-[2]" />
                 )}
-              </Button>
-            </div>
-          </form>
-        </div>
+              </button>
+            </form>
+          </div>
+        )}
       </main>
     </TooltipProvider>
   );
