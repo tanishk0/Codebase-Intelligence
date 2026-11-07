@@ -384,6 +384,9 @@ class SupabaseVectorStore:
 
                 changed_set = set(changed_files) | set(edge_changed)
                 paths_to_replace = sorted(changed_set | set(deleted_files))
+
+                repo_summary = ""
+                if include_summaries and all_chunks:
                     active_summarizer = summarizer or RepoSummarizer()
                     file_summaries = active_summarizer.build_file_summary_chunks(all_chunks, use_llm=llm_summaries)
                     all_chunks.extend(file_summaries)
