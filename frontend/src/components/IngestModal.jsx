@@ -146,85 +146,91 @@ export default function IngestModal({
                   />
                 </div>
               </div>
-            </>
-          ) : (
-            <div className="local-workspace-card">
-              <div className="local-card-icon">
-                <Laptop size={20} />
-              </div>
-              <div className="local-card-info">
-                <h4>Index Local Project Workspace</h4>
-                <p>
-                  Scans and indexes the local project files directly from your workspace directory with automatic incremental sync.
-                </p>
-              </div>
-            </div>
-          )}
+            </TabsContent>
 
-          {/* Deep Summaries Option (No AI model names) */}
-          <label className="feature-toggle-card">
-            <div className="feature-toggle-left">
-              <div className="feature-icon">
-                <Sparkles size={15} />
+            <TabsContent value="local" className="mt-4">
+              <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/45 p-3.5">
+                <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-primary/25 bg-primary/10 text-primary">
+                  <Laptop className="h-4 w-4" />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="font-display text-xs font-bold text-foreground">
+                    Mount Local Project Directory
+                  </h4>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    Indexes the local workspace directory directly with automatic SHA-256 incremental synchronization.
+                  </p>
+                </div>
+              </div>
+            </TabsContent>
+          </Tabs>
+
+          {/* Enhanced Architectural Summaries Toggle */}
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/60 p-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-primary/25 bg-primary/10 text-primary">
+                <FileText className="h-4 w-4" />
               </div>
               <div>
-                <div className="feature-title">Enhanced Architectural Summaries</div>
-                <div className="feature-desc">
-                  Generate high-level file and module overviews during indexing
+                <div className="font-display text-xs font-bold text-foreground">
+                  Architectural File Dossiers
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  Synthesize structural module overviews during AST indexing
                 </div>
               </div>
             </div>
-            <input
-              type="checkbox"
-              className="toggle-checkbox"
+            <Switch
               checked={deepSummaries}
-              onChange={(e) => setDeepSummaries(e.target.checked)}
+              onCheckedChange={setDeepSummaries}
               disabled={isIngesting}
+              aria-label="Toggle architectural file dossiers"
             />
-          </label>
+          </div>
 
           {error && (
-            <div className="modal-error-banner">
-              <AlertCircle size={15} />
+            <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2.5 font-mono text-xs text-destructive">
+              <AlertCircle className="h-4 w-4 shrink-0" />
               <span>{error}</span>
             </div>
           )}
 
-          <div className="modal-actions">
-            <button
+          <DialogFooter className="mt-1 gap-2 sm:gap-0">
+            <Button
               type="button"
-              className="btn-secondary"
+              variant="outline"
               onClick={onClose}
               disabled={isIngesting}
+              className="font-mono text-xs uppercase"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="submit"
-              className="btn-primary"
               disabled={
                 isIngesting || (sourceType === "github" && !repoUrl.trim())
               }
+              className="font-mono text-xs uppercase tracking-wider"
             >
               {isIngesting ? (
                 <>
-                  <Loader2 size={16} className="spin" />
-                  <span>Indexing Codebase...</span>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>INDEXING AST...</span>
                 </>
               ) : (
                 <>
                   <span>
                     {sourceType === "local"
-                      ? "Index Local Workspace"
-                      : "Connect & Index"}
+                      ? "MOUNT LOCAL WORKSPACE"
+                      : "MOUNT & INDEX"}
                   </span>
-                  <ArrowRight size={15} />
+                  <ArrowRight className="h-4 w-4" />
                 </>
               )}
-            </button>
-          </div>
+            </Button>
+          </DialogFooter>
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
