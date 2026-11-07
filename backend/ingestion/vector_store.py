@@ -96,6 +96,12 @@ class SupabaseVectorStore:
         self._repo_cache[repo_id] = row
         return dict(row)
 
+    def delete_repository(self, repo_id: str) -> bool:
+        """Deletes a repository and cascades to its chunks, conversations, messages, and jobs."""
+        self._repo_cache.pop(repo_id, None)
+        res = self.client.table("repositories").delete().eq("id", repo_id).execute()
+        return bool(res.data)
+
     @staticmethod
     def pipeline_version(embed_model: str, embedding_dim: int) -> str:
         """Fingerprints everything that shapes a stored chunk and its embedding.
@@ -378,9 +384,6 @@ class SupabaseVectorStore:
 
                 changed_set = set(changed_files) | set(edge_changed)
                 paths_to_replace = sorted(changed_set | set(deleted_files))
-
-                repo_summary = ""
-                if include_summaries and all_chunks:
                     active_summarizer = summarizer or RepoSummarizer()
                     file_summaries = active_summarizer.build_file_summary_chunks(all_chunks, use_llm=llm_summaries)
                     all_chunks.extend(file_summaries)
