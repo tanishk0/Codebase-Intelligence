@@ -255,3 +255,4 @@ export function formatSyncSummary(stats = {}) {
   }
   return "Repository synchronized.";
 }
+
