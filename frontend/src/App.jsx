@@ -48,11 +48,8 @@ export default function App() {
   // Page navigation state ("landing" | "workspace")
   const [currentPage, setCurrentPage] = useState(resolveInitialPage);
 
-  // Default to Clean Light Mode with persistence for Workspace
-  const [theme, setTheme] = useState(() => {
-    const saved = localStorage.getItem("copilot-theme");
-    return saved === "dark" ? "dark" : "light";
-  });
+  // Exclusive Arcline Dark Mode across Landing and Workspace
+  const [theme, setTheme] = useState("dark");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   // Authentication state (Google OAuth via Supabase)
@@ -268,7 +265,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!user) return;
     checkSystemHealth();
     loadAllRepositories();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -292,10 +288,7 @@ export default function App() {
     try {
       await signOutUser();
       setUser(null);
-      setActiveRepoId(null);
-      setConversations([]);
-      setActiveConversationId(null);
-      setMessages([]);
+      navigateToPage("landing");
       showToast("info", "Signed out of workspace.", 3000);
     } catch (err) {
       showToast("error", err.message || "Failed to sign out.");
