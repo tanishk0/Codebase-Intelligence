@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { ArclineIcon } from "./ArclineLogo";
 
 const FILE_REF_REGEX = /^\[?[a-zA-Z0-9_./-]+:L\d+(?:-L?\d+)?\]?$/;
 
@@ -145,10 +146,10 @@ export default function MessageItem({ message }) {
       className="flex items-start gap-3"
     >
       <div
-        className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-xs"
-        title="Codebase Copilot"
+        className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#111827] border border-[#243041] shadow-xs"
+        title="Arcline"
       >
-        <Terminal className="h-4 w-4" />
+        <ArclineIcon className="h-4.5 w-4.5" />
       </div>
 
       <Card className="tactile-card min-w-0 flex-1 rounded-xl border-border bg-card px-5 py-4">
