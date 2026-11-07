@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Loader2, Terminal } from "lucide-react";
+import { Loader2 } from "lucide-react";
+import { ArclineIcon } from "./components/ArclineLogo";
 import LandingPage from "./pages/LandingPage";
 import WorkspacePage from "./pages/WorkspacePage";
+import { cn } from "./lib/utils";
 import {
   initializeAuth,
   signInWithGoogle,
@@ -26,17 +28,17 @@ import {
 function resolveInitialPage() {
   if (typeof window === "undefined") return "landing";
   const path = window.location.pathname.toLowerCase();
+  if (path.startsWith("/workspace")) {
+    return "workspace";
+  }
   const hasOAuthCallback =
     window.location.search.includes("code=") ||
     window.location.hash.includes("access_token=");
   const pendingPostAuth =
     sessionStorage.getItem("copilot-post-auth-page") === "workspace";
 
-  if (hasOAuthCallback || pendingPostAuth) {
+  if (hasOAuthCallback && pendingPostAuth) {
     sessionStorage.removeItem("copilot-post-auth-page");
-    return "workspace";
-  }
-  if (path.startsWith("/workspace")) {
     return "workspace";
   }
   return "landing";
@@ -540,77 +542,73 @@ export default function App() {
   const toggleTheme = () =>
     setTheme((prev) => (prev === "light" ? "dark" : "light"));
 
-  if (currentPage === "landing") {
-    return (
-      <LandingPage
-        user={user}
-        onEnterWorkspace={() => navigateToPage("workspace")}
-        onGoogleSignIn={handleGoogleSignIn}
-        isAuthenticating={isAuthenticating}
-        authError={authError}
-      />
-    );
-  }
-
-  if (authLoading) {
-    return (
-      <div className="drafting-canvas flex h-screen w-screen flex-col items-center justify-center gap-3 bg-background text-foreground">
-        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-xs">
-          <Terminal className="h-5 w-5" />
-        </div>
-        <div className="flex items-center gap-2 font-mono text-xs uppercase tracking-widest text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-          <span>VERIFYING SESSION...</span>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <WorkspacePage
-      user={user}
-      theme={theme}
-      onToggleTheme={toggleTheme}
-      isSidebarCollapsed={isSidebarCollapsed}
-      onToggleSidebarCollapse={() => setIsSidebarCollapsed((prev) => !prev)}
-      onExpandSidebar={() => setIsSidebarCollapsed(false)}
-      onGoogleSignIn={handleGoogleSignIn}
-      isAuthenticating={isAuthenticating}
-      authError={authError}
-      onSignOut={handleSignOut}
-      health={health}
-      repos={repos}
-      activeRepo={activeRepo}
-      onSelectRepo={selectRepository}
-      conversations={conversations}
-      activeConversation={activeConversation}
-      activeConversationId={activeConversationId}
-      onSelectConversation={loadConversationThread}
-      messages={messages}
-      loadingConversation={loadingConversation}
-      hasMoreMessages={hasMoreMessages}
-      loadingOlderMessages={loadingOlderMessages}
-      onLoadOlderMessages={handleLoadOlderMessages}
-      onSendMessage={handleSendMessage}
-      isSending={isSending}
-      onNewChat={handleNewChat}
-      isCreatingChat={isCreatingChat}
-      ingestModalOpen={ingestModalOpen}
-      onOpenIngestModal={() => {
-        setIngestError("");
-        setIngestModalOpen(true);
-      }}
-      onCloseIngestModal={() => !isIngesting && setIngestModalOpen(false)}
-      onIngestRepository={handleIngestRepository}
-      isIngesting={isIngesting}
-      ingestError={ingestError}
-      onReindexRepo={handleReindexActiveRepo}
-      isReindexing={isReindexing}
-      onDeleteRepo={handleDeleteRepository}
-      deletingRepoId={deletingRepoId}
-      toast={toast}
-      onDismissToast={() => setToast(null)}
-      onNavigateToLanding={() => navigateToPage("landing")}
-    />
+    <>
+      {currentPage === "landing" ? (
+        <LandingPage
+          user={user}
+          onEnterWorkspace={() => navigateToPage("workspace")}
+          onGoogleSignIn={handleGoogleSignIn}
+          isAuthenticating={isAuthenticating}
+          authError={authError}
+        />
+      ) : authLoading ? (
+        <div className="drafting-canvas flex h-screen w-screen flex-col items-center justify-center gap-3 bg-background text-foreground">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-xs">
+            <Terminal className="h-5 w-5" />
+          </div>
+          <div className="flex items-center gap-2 font-mono text-xs uppercase tracking-widest text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+            <span>VERIFYING SESSION...</span>
+          </div>
+        </div>
+      ) : (
+        <WorkspacePage
+          user={user}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+          isSidebarCollapsed={isSidebarCollapsed}
+          onToggleSidebarCollapse={() => setIsSidebarCollapsed((prev) => !prev)}
+          onExpandSidebar={() => setIsSidebarCollapsed(false)}
+          onGoogleSignIn={handleGoogleSignIn}
+          isAuthenticating={isAuthenticating}
+          authError={authError}
+          onSignOut={handleSignOut}
+          health={health}
+          repos={repos}
+          activeRepo={activeRepo}
+          onSelectRepo={selectRepository}
+          conversations={conversations}
+          activeConversation={activeConversation}
+          activeConversationId={activeConversationId}
+          onSelectConversation={loadConversationThread}
+          messages={messages}
+          loadingConversation={loadingConversation}
+          hasMoreMessages={hasMoreMessages}
+          loadingOlderMessages={loadingOlderMessages}
+          onLoadOlderMessages={handleLoadOlderMessages}
+          onSendMessage={handleSendMessage}
+          isSending={isSending}
+          onNewChat={handleNewChat}
+          isCreatingChat={isCreatingChat}
+          ingestModalOpen={ingestModalOpen}
+          onOpenIngestModal={() => {
+            setIngestError("");
+            setIngestModalOpen(true);
+          }}
+          onCloseIngestModal={() => !isIngesting && setIngestModalOpen(false)}
+          onIngestRepository={handleIngestRepository}
+          isIngesting={isIngesting}
+          ingestError={ingestError}
+          onReindexRepo={handleReindexActiveRepo}
+          isReindexing={isReindexing}
+          onDeleteRepo={handleDeleteRepository}
+          deletingRepoId={deletingRepoId}
+          toast={toast}
+          onDismissToast={() => setToast(null)}
+          onNavigateToLanding={() => navigateToPage("landing")}
+        />
+      )}
+    </>
   );
 }
