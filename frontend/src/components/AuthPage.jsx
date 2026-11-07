@@ -18,6 +18,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import ArclineLogo, { ArclineIcon } from "./ArclineLogo";
 
 function GoogleLogo({ className = "h-5 w-5" }) {
   return (
@@ -98,17 +99,12 @@ export default function AuthPage({
       {/* Top Instrument Navigation Header */}
       <header className="relative z-10 flex h-16 shrink-0 items-center justify-between border-b border-border/80 bg-card/75 px-6 backdrop-blur-md sm:px-10">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-xs">
-            <Terminal className="h-4 w-4" strokeWidth={2.3} />
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#111827] border border-[#243041] shadow-xs">
+            <ArclineIcon className="h-5 w-5" />
           </div>
-          <div className="flex items-baseline gap-1.5">
-            <span className="font-display text-lg font-bold tracking-tight text-foreground">
-              Codebase
-            </span>
-            <span className="font-serif text-xl italic text-primary">
-              Copilot
-            </span>
-          </div>
+          <span className="font-inter text-xl font-bold tracking-tight text-foreground">
+            Arcline
+          </span>
           <span className="ml-2 hidden rounded border border-border bg-muted/70 px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground sm:inline-block">
             AUTH // GATEWAY
           </span>
@@ -166,7 +162,7 @@ export default function AuthPage({
               </h1>
 
               <p className="mt-4 max-w-xl text-base leading-relaxed text-muted-foreground">
-                Mount repositories in seconds. Codebase Copilot parses AST symbols, traces cross-file call graphs, and synthesizes answers grounded in exact line citations.
+                Mount repositories in seconds. Arcline parses AST symbols, traces cross-file call graphs, and synthesizes answers grounded in exact line citations.
               </p>
             </div>
 
@@ -423,7 +419,7 @@ export default function AuthPage({
                   </>
                 ) : (
                   <>
-                    New to Codebase Copilot?{" "}
+                    New to Arcline?{" "}
                     <button
                       type="button"
                       onClick={() => setMode("signup")}
