@@ -1,25 +1,41 @@
-import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { useState, useMemo } from "react";
+import { motion } from "motion/react";
 import {
-  Code2,
-  ChevronDown,
+  Terminal,
   Plus,
   Search,
-  MessageSquare,
   GitBranch,
-  Check,
   FolderGit2,
+  Laptop,
   Sun,
   Moon,
   PanelLeftClose,
   RefreshCw,
+  Trash2,
+  Loader2,
+  AlertTriangle,
   X,
-  Sparkles,
+  Clock,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-  formatRepoName,
-  formatRelativeTime,
-  groupConversationsByDate,
-} from "../api";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
+import { formatRepoName, formatRelativeTime } from "../api";
 
 export default function Sidebar({
   repos,
@@ -28,11 +44,8 @@ export default function Sidebar({
   onOpenIngestModal,
   onReindexRepo,
   isReindexing,
-  conversations,
-  activeConversationId,
-  onSelectConversation,
-  onNewChat,
-  isCreatingChat,
+  onDeleteRepo,
+  deletingRepoId,
   health,
   theme,
   onToggleTheme,
