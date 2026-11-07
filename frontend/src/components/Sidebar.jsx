@@ -36,6 +36,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import ArclineLogo, { ArclineIcon } from "./ArclineLogo";
 import { formatRepoName, formatRelativeTime } from "../api";
 
 export default function Sidebar({
@@ -71,7 +72,7 @@ export default function Sidebar({
 
   const isLocalRepo = (url) => {
     const str = String(url || "").toLowerCase();
-    return str === "local" || str.includes("local/codebase-copilot");
+    return str === "local" || str.includes("local/codebase-copilot") || str.includes("local/arcline");
   };
 
   const handleConfirmDelete = async () => {
@@ -100,10 +101,10 @@ export default function Sidebar({
                 className="hover:text-foreground transition-colors cursor-pointer"
                 title="Return to Landing Page"
               >
-                ← LANDING // CB-COPILOT
+                ← LANDING // ARCLINE
               </button>
             ) : (
-              <span>UNIT // CB-COPILOT</span>
+              <span>UNIT // ARCLINE</span>
             )}
             <span>REV 2.4</span>
           </div>
@@ -118,17 +119,12 @@ export default function Sidebar({
                 onNavigateToLanding && "cursor-pointer group"
               )}
             >
-              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-xs">
-                <Terminal className="h-4 w-4" strokeWidth={2.2} />
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#111827] border border-[#243041] shadow-xs transition-transform group-hover:scale-105">
+                <ArclineIcon className="h-5 w-5" />
               </div>
-              <div className="flex items-baseline gap-1.5">
-                <span className="font-display text-base font-bold tracking-tight text-foreground">
-                  Codebase
-                </span>
-                <span className="font-serif text-lg italic text-primary">
-                  Copilot
-                </span>
-              </div>
+              <span className="font-inter text-[17px] font-bold tracking-tight text-foreground">
+                Arcline
+              </span>
             </div>
 
             <Tooltip>
