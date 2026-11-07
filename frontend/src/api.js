@@ -1,5 +1,5 @@
 /**
- * API client and formatting helpers for Codebase Copilot.
+ * API client and formatting helpers for Arcline.
  */
 
 let activeAccessToken = null;
