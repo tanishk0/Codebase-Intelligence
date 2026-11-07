@@ -554,8 +554,8 @@ export default function App() {
         />
       ) : authLoading ? (
         <div className="drafting-canvas flex h-screen w-screen flex-col items-center justify-center gap-3 bg-background text-foreground">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-xs">
-            <Terminal className="h-5 w-5" />
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#111827] border border-[#243041] shadow-md">
+            <ArclineIcon className="h-6 w-6" />
           </div>
           <div className="flex items-center gap-2 font-mono text-xs uppercase tracking-widest text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
