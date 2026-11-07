@@ -272,6 +272,23 @@ def list_repos() -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.delete("/api/repos/{repo_id}")
+def delete_repo(
+    repo_id: str,
+    _auth: AuthContext = Depends(get_auth_context),
+) -> dict[str, Any]:
+    try:
+        store = SupabaseVectorStore()
+        if not store.get_repository(repo_id):
+            raise HTTPException(status_code=404, detail="Repository not found.")
+        store.delete_repository(repo_id)
+        return {"deleted": True, "repo_id": repo_id}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/repos/{repo_id}/conversations")
 def list_conversations(repo_id: str) -> dict[str, Any]:
     try:
