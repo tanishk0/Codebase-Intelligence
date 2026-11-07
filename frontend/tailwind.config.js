@@ -7,9 +7,10 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ["Bricolage Grotesque", "sans-serif"],
-        display: ["Bricolage Grotesque", "sans-serif"],
-        serif: ["Instrument Serif", "Georgia", "serif"],
+        sans: ["Inter", "sans-serif"],
+        display: ["Fraunces", "serif"],
+        fraunces: ["Fraunces", "serif"],
+        inter: ["Inter", "sans-serif"],
         mono: ["Azeret Mono", "monospace"],
       },
       borderRadius: {
@@ -18,6 +19,24 @@ export default {
         sm: "calc(var(--radius) - 4px)",
       },
       colors: {
+        // Design System Palette
+        ink: "#0B0D0F",
+        canvas: "#FAF7F4",
+        surface: "#F2EDE8",
+        slate: {
+          DEFAULT: "#718096",
+          50: "#f8fafc",
+          100: "#f1f5f9",
+          200: "#e2e8f0",
+          300: "#cbd5e1",
+          400: "#94a3b8",
+          500: "#718096",
+          600: "#475569",
+          700: "#334155",
+          800: "#1e293b",
+          900: "#0f172a",
+        },
+        borderPalette: "#E5E3DF",
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
         card: {
