@@ -200,6 +200,67 @@ export function reciprocalRankFusion(denseResults, bm25Results, k = 60) {
   },
 ];
 
+// Framer Motion staggered entrance animation variants
+const staggerContainerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.12,
+      delayChildren: 0.08,
+    },
+  },
+};
+
+const fadeUpItemVariants = {
+  hidden: { opacity: 0, y: 20 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      duration: 0.6,
+      ease: [0.16, 1, 0.3, 1],
+    },
+  },
+};
+
+const heroPreviewVariants = {
+  hidden: { opacity: 0, y: 28, scale: 0.98 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    scale: 1,
+    transition: {
+      duration: 0.75,
+      delay: 0.2,
+      ease: [0.16, 1, 0.3, 1],
+    },
+  },
+};
+
+const footerStaggerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.1,
+      delayChildren: 0.32,
+    },
+  },
+};
+
+const footerStepVariants = {
+  hidden: { opacity: 0, y: 14 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      duration: 0.5,
+      ease: [0.16, 1, 0.3, 1],
+    },
+  },
+};
+
 export default function LandingPage({
   user,
   onEnterWorkspace,
@@ -252,7 +313,12 @@ export default function LandingPage({
       {/* ====================================================================
           TOP NAVIGATION HEADER
           ==================================================================== */}
-      <header className="relative z-30 mx-auto flex w-full max-w-[1340px] shrink-0 items-center justify-between px-6 pt-5 pb-3 sm:px-10 lg:px-14 lg:pt-6">
+      <motion.header
+        initial={{ opacity: 0, y: -12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
+        className="relative z-30 mx-auto flex w-full max-w-[1340px] shrink-0 items-center justify-between px-6 pt-5 pb-3 sm:px-10 lg:px-14 lg:pt-6"
+      >
         {/* Left Group: Brand Logo + Navigation Links */}
         <div className="flex items-center">
           <button
@@ -307,7 +373,7 @@ export default function LandingPage({
             {user ? "Open Workspace" : "Get started"}
           </PrimaryButton>
         </div>
-      </header>
+      </motion.header>
 
       {/* ====================================================================
           MAIN HERO SECTION (LEFT EDITORIAL COPY + RIGHT PREVIEW WINDOW)
@@ -321,19 +387,27 @@ export default function LandingPage({
 
         <div className="flex flex-col items-start justify-between gap-12 lg:flex-row lg:items-center lg:gap-8">
           {/* ================================================================
-              LEFT COLUMN: EDITORIAL COPY & CALLS TO ACTION
+              LEFT COLUMN: EDITORIAL COPY & CALLS TO ACTION (STAGGERED FADE-IN)
               ================================================================ */}
-          <div className="relative z-20 flex w-full flex-col items-start lg:w-[40%] xl:w-[41%]">
+          <motion.div
+            variants={staggerContainerVariants}
+            initial="hidden"
+            animate="visible"
+            className="relative z-20 flex w-full flex-col items-start lg:w-[40%] xl:w-[41%]"
+          >
             {/* Eyebrow Label with Hairline */}
-            <div className="flex items-center gap-3.5">
+            <motion.div variants={fadeUpItemVariants} className="flex items-center gap-3.5">
               <span className="font-inter text-[11px] font-medium tracking-[0.16em] uppercase text-[#9CA3AF]">
                 AI FOR CODEBASES
               </span>
               <span className="inline-block h-[1px] w-7 bg-[#243041]" />
-            </div>
+            </motion.div>
 
             {/* Main Editorial Headline in Fraunces */}
-            <h1 className="font-fraunces mt-5 mb-5 text-[48px] font-normal leading-[1.04] tracking-[-0.025em] text-[#F3F4F6] sm:text-[58px] lg:text-[62px] xl:text-[68px]">
+            <motion.h1
+              variants={fadeUpItemVariants}
+              className="font-fraunces mt-5 mb-5 text-[48px] font-normal leading-[1.04] tracking-[-0.025em] text-[#F3F4F6] sm:text-[58px] lg:text-[62px] xl:text-[68px]"
+            >
               Understand
               <br />
               <span className="whitespace-nowrap">your codebase,</span>
@@ -341,16 +415,22 @@ export default function LandingPage({
               <span className="italic font-normal text-[#7DB4FF]">
                 instantly.
               </span>
-            </h1>
+            </motion.h1>
 
             {/* Subtitle Description in Inter */}
-            <p className="mb-7 max-w-[400px] font-inter text-[15px] leading-[1.58] text-[#9CA3AF] lg:text-[16px]">
+            <motion.p
+              variants={fadeUpItemVariants}
+              className="mb-7 max-w-[400px] font-inter text-[15px] leading-[1.58] text-[#9CA3AF] lg:text-[16px]"
+            >
               Ask questions about your repository and get source-grounded
               answers with file citations.
-            </p>
+            </motion.p>
 
             {/* Action Buttons */}
-            <div className="flex flex-wrap items-center gap-3.5">
+            <motion.div
+              variants={fadeUpItemVariants}
+              className="flex flex-wrap items-center gap-3.5"
+            >
               <PrimaryButton
                 size="lg"
                 withArrow
@@ -369,13 +449,18 @@ export default function LandingPage({
               >
                 View on GitHub
               </SecondaryButton>
-            </div>
-          </div>
+            </motion.div>
+          </motion.div>
 
           {/* ================================================================
               RIGHT COLUMN: 3D HERO ASSET + INTERACTIVE PREVIEW WINDOW
               ================================================================ */}
-          <div className="relative flex w-full items-center justify-center lg:w-[55.5%] lg:justify-end">
+          <motion.div
+            variants={heroPreviewVariants}
+            initial="hidden"
+            animate="visible"
+            className="relative flex w-full items-center justify-center lg:w-[55.5%] lg:justify-end"
+          >
             <div className="relative w-full max-w-[660px] lg:max-w-none">
               {/* Signature 3D Metallic Form — Anchored proportionally to the Window
                   so the top peak rises above the window and the bottom-left tip
@@ -726,17 +811,22 @@ export default function LandingPage({
                 </div>
               </div>
             </div>
-          </div>
+          </motion.div>
         </div>
       </main>
 
       {/* ====================================================================
           BOTTOM PROCESS STRIP (01 — 02 — 03 WITH HORIZONTAL CONNECTORS)
           ==================================================================== */}
-      <footer className="relative z-20 mx-auto w-full max-w-[1340px] shrink-0 px-6 pt-4 pb-7 sm:px-10 lg:px-14 lg:pb-9">
+      <motion.footer
+        variants={footerStaggerVariants}
+        initial="hidden"
+        animate="visible"
+        className="relative z-20 mx-auto w-full max-w-[1340px] shrink-0 px-6 pt-4 pb-7 sm:px-10 lg:px-14 lg:pb-9"
+      >
         <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-center lg:px-4">
           {/* Step 01 */}
-          <div className="flex items-center gap-4">
+          <motion.div variants={footerStepVariants} className="flex items-center gap-4">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[#222B3A] bg-[#151B26] font-inter text-[12.5px] font-medium text-[#D1D5DB]">
               01
             </span>
@@ -748,13 +838,16 @@ export default function LandingPage({
                 Link your codebase in seconds.
               </p>
             </div>
-          </div>
+          </motion.div>
 
           {/* Connector Line 1 */}
-          <div className="hidden h-[1px] w-16 bg-[#222B3A] md:block lg:w-24" />
+          <motion.div
+            variants={footerStepVariants}
+            className="hidden h-[1px] w-16 bg-[#222B3A] md:block lg:w-24"
+          />
 
           {/* Step 02 */}
-          <div className="flex items-center gap-4">
+          <motion.div variants={footerStepVariants} className="flex items-center gap-4">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[#222B3A] bg-[#151B26] font-inter text-[12.5px] font-medium text-[#D1D5DB]">
               02
             </span>
@@ -766,13 +859,16 @@ export default function LandingPage({
                 In natural language.
               </p>
             </div>
-          </div>
+          </motion.div>
 
           {/* Connector Line 2 */}
-          <div className="hidden h-[1px] w-16 bg-[#222B3A] md:block lg:w-24" />
+          <motion.div
+            variants={footerStepVariants}
+            className="hidden h-[1px] w-16 bg-[#222B3A] md:block lg:w-24"
+          />
 
           {/* Step 03 */}
-          <div className="flex items-center gap-4">
+          <motion.div variants={footerStepVariants} className="flex items-center gap-4">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[#222B3A] bg-[#151B26] font-inter text-[12.5px] font-medium text-[#D1D5DB]">
               03
             </span>
@@ -784,9 +880,9 @@ export default function LandingPage({
                 With exact file references.
               </p>
             </div>
-          </div>
+          </motion.div>
         </div>
-      </footer>
+      </motion.footer>
 
       {/* ====================================================================
           CITATION CODE INSPECTOR MODAL (DARK THEME)

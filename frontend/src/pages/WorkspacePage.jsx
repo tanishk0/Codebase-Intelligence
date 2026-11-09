@@ -1,4 +1,5 @@
 import React from "react";
+import { motion } from "motion/react";
 import { CheckCircle2, AlertCircle, Loader2, X } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import ChatWorkspace from "../components/ChatWorkspace";
@@ -44,7 +45,12 @@ export default function WorkspacePage({
   onNavigateToLanding,
 }) {
   return (
-    <div className="saas-shell">
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+      className="saas-shell"
+    >
       <Sidebar
         repos={repos}
         activeRepo={activeRepo}
@@ -119,6 +125,6 @@ export default function WorkspacePage({
           </button>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }
