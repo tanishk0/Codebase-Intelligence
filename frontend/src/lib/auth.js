@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { setAuthSession, clearAuthSession } from "../api";
+import { setAuthSession, clearAuthSession, apiFetch } from "../api";
 
 let supabaseClient = null;
 let initPromise = null;
@@ -168,7 +168,7 @@ export async function initializeAuth(onAuthChange) {
  * Initiates the Google OAuth 2.0 flow via Supabase Auth.
  */
 export async function signInWithGoogle() {
-  const redirectTo = window.location.origin;
+  const redirectTo = `${window.location.origin}/workspace`;
   const client = await getSupabaseAuthClient();
 
   if (client) {
@@ -207,7 +207,7 @@ export async function signInWithGoogle() {
 export async function signOutUser() {
   const client = await getSupabaseAuthClient();
   try {
-    await fetch("/api/auth/logout", { method: "POST" });
+    await apiFetch("/api/auth/logout", { method: "POST" });
   } catch {
     // Ignore network errors during logout
   }

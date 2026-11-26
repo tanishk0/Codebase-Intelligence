@@ -257,6 +257,9 @@ export default function App() {
       if (typeof unsub === "function") {
         unsubscribe = unsub;
       }
+    }).catch((err) => {
+      setAuthError(err.message || "Could not restore your session.");
+      setAuthLoading(false);
     });
 
     return () => {
@@ -265,8 +268,25 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     checkSystemHealth();
-    loadAllRepositories();
+    setRepos([]);
+    setActiveRepoId(null);
+    setConversations([]);
+    setActiveConversationId(null);
+    setMessages([]);
+    setHasMoreMessages(false);
+    setOldestMessageId(null);
+    if (user?.id) {
+      fetchRepositories().then((list) => {
+        if (cancelled) return;
+        setRepos(list);
+        if (list.length > 0) selectRepository(list[0]);
+      }).catch((err) => {
+        if (!cancelled) showToast("error", err.message || "Failed to load repositories.");
+      });
+    }
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
@@ -555,6 +575,14 @@ export default function App() {
             <span>VERIFYING SESSION...</span>
           </div>
         </div>
+      ) : !user ? (
+        <LandingPage
+          user={user}
+          onEnterWorkspace={handleGoogleSignIn}
+          onGoogleSignIn={handleGoogleSignIn}
+          isAuthenticating={isAuthenticating}
+          authError={authError}
+        />
       ) : (
         <WorkspacePage
           user={user}
