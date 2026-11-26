@@ -91,6 +91,12 @@ class TestIngestionHelpers(unittest.TestCase):
             files = load_repository_files(root, max_total_bytes=20)
             self.assertEqual([f.file_path for f in files], ["a.py"])
 
+    def test_loader_excludes_environment_files_and_private_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in (".env", ".env.local", ".env.example", "private.pem", "signing.key", "app.py"):
+                (root / name).write_text("secret = 'value'\n", encoding="utf-8")
+            self.assertEqual([f.file_path for f in load_repository_files(root)], ["app.py"])
 
 
 class TestBackgroundReindexJobFlow(unittest.IsolatedAsyncioTestCase):

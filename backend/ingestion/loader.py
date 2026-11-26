@@ -67,6 +67,10 @@ def load_repository_files(
         if not path.is_file():
             continue
 
+        # Environment files and private keys must never be sent to embedding services.
+        if path.name == ".env" or path.name.startswith(".env.") or path.suffix.lower() in {".pem", ".key"}:
+            continue
+
         # 1. Skip ignored directories (.git, node_modules, etc.)
         if any(part in settings.IGNORED_DIRS for part in path.parts):
             continue
