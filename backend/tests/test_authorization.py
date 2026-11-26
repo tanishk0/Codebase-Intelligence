@@ -95,6 +95,11 @@ class TestWorkspaceAuthorization(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         ingest.assert_called_once_with("local", None, False, "user-1")
 
+    def test_workspace_refresh_and_public_assets(self):
+        self.assertEqual(self.client.get("/workspace").status_code, 200)
+        self.assertEqual(self.client.get("/arcline-icon.svg").status_code, 200)
+        self.assertEqual(self.client.get("/static/package.json").status_code, 404)
+        self.assertEqual(self.client.get("/static/src/App.jsx").status_code, 404)
 
     def test_service_key_is_never_used_as_public_auth_configuration(self):
         for key in ("sb_secret_test", "eyJhbGciOi.service_role.signature"):

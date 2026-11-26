@@ -709,15 +709,25 @@ FRONTEND_DIR.mkdir(parents=True, exist_ok=True)
 FRONTEND_DIST_DIR = FRONTEND_DIR / "dist"
 if (FRONTEND_DIST_DIR / "assets").is_dir():
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST_DIR / "assets")), name="assets")
-app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR / "public")), name="static")
 
 
+@app.get("/workspace")
 @app.get("/")
 def serve_frontend() -> FileResponse:
     dist_index = FRONTEND_DIST_DIR / "index.html"
     if dist_index.is_file():
         return FileResponse(str(dist_index))
     return FileResponse(str(FRONTEND_DIR / "index.html"))
+
+
+@app.get("/{asset_name}")
+def serve_public_asset(asset_name: str) -> FileResponse:
+    public_dir = (FRONTEND_DIR / "public").resolve()
+    asset = (public_dir / asset_name).resolve()
+    if asset.parent != public_dir or not asset.is_file():
+        raise HTTPException(status_code=404, detail="Not found.")
+    return FileResponse(str(asset))
 
 
 def main() -> None:
