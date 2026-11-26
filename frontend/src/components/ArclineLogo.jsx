@@ -4,8 +4,8 @@ import { cn } from "@/lib/utils";
 /**
  * ArclineIcon
  * Precision vector representation of the signature Arcline logo mark:
- * - 4 corner focus brackets (with top-right brilliant blue accent #60A5FA / #3B82F6)
- * - 1 central upward chevron in crisp white #FFFFFF
+ * - 4 corner focus brackets (with a silver top-right accent)
+ * - 1 central upward chevron in crisp white #ffffff
  */
 export function ArclineIcon({
   className = "h-7 w-7",
@@ -33,8 +33,8 @@ export function ArclineIcon({
           x2="100%"
           y2="100%"
         >
-          <stop offset="0%" stopColor="#70A6FF" />
-          <stop offset="100%" stopColor="#3B82F6" />
+          <stop offset="0%" stopColor="#d4d4d4" />
+          <stop offset="100%" stopColor="#a3a3a3" />
         </linearGradient>
 
         {/* Top-Left: Frosted White Ice */}
@@ -45,8 +45,8 @@ export function ArclineIcon({
           x2="100%"
           y2="100%"
         >
-          <stop offset="0%" stopColor="#FFFFFF" />
-          <stop offset="100%" stopColor="#DCE4F0" />
+          <stop offset="0%" stopColor="#ffffff" />
+          <stop offset="100%" stopColor="#e3e3e3" />
         </linearGradient>
 
         {/* Bottom-Left: Slate Ice Steel */}
@@ -57,11 +57,11 @@ export function ArclineIcon({
           x2="100%"
           y2="0%"
         >
-          <stop offset="0%" stopColor="#8EA2C4" />
-          <stop offset="100%" stopColor="#B2C2DC" />
+          <stop offset="0%" stopColor="#a0a0a0" />
+          <stop offset="100%" stopColor="#c0c0c0" />
         </linearGradient>
 
-        {/* Bottom-Right: Soft Slate Blue */}
+        {/* Bottom-Right: Soft Silver */}
         <linearGradient
           id={`${idPrefix}-br`}
           x1="100%"
@@ -69,8 +69,8 @@ export function ArclineIcon({
           x2="0%"
           y2="0%"
         >
-          <stop offset="0%" stopColor="#839BC0" />
-          <stop offset="100%" stopColor="#A5B7D4" />
+          <stop offset="0%" stopColor="#999999" />
+          <stop offset="100%" stopColor="#b5b5b5" />
         </linearGradient>
       </defs>
 
@@ -84,7 +84,7 @@ export function ArclineIcon({
         strokeLinejoin="round"
       />
 
-      {/* Top-Right Corner Bracket (Signature Blue) */}
+      {/* Top-Right Corner Bracket (Silver) */}
       <path
         d="M 63 10 H 78 A 12 12 0 0 1 90 22 V 37"
         fill="none"
@@ -118,7 +118,7 @@ export function ArclineIcon({
       <path
         d="M 34 62 L 50 39 L 66 62"
         fill="none"
-        stroke={variant === "monochrome" ? "currentColor" : "#FFFFFF"}
+        stroke={variant === "monochrome" ? "currentColor" : "#ffffff"}
         strokeWidth="13"
         strokeLinecap="round"
         strokeLinejoin="round"

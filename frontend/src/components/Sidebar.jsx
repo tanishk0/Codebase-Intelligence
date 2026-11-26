@@ -122,7 +122,7 @@ export default function Sidebar({
     <TooltipProvider delayDuration={180}>
       <aside
         className={cn(
-          "flex h-screen flex-col border-r border-[#1E2636] bg-[#0F141E] transition-all duration-300 select-none shrink-0 font-inter",
+          "flex h-screen flex-col border-r border-[#262626] bg-[#0a0a0a] transition-all duration-300 select-none shrink-0 font-inter",
           isCollapsed
             ? "w-0 min-w-0 overflow-hidden border-r-0 opacity-0 pointer-events-none"
             : "w-[248px] min-w-[248px]"
@@ -148,7 +148,7 @@ export default function Sidebar({
                 type="button"
                 onClick={onToggleCollapse}
                 aria-label="Collapse sidebar"
-                className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[#9CA3AF] transition-colors hover:bg-[#1A2232] hover:text-white cursor-pointer"
+                className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[#a3a3a3] transition-colors hover:bg-[#202020] hover:text-white cursor-pointer"
               >
                 <PanelLeftClose className="h-4 w-4" />
               </button>
@@ -163,13 +163,13 @@ export default function Sidebar({
             <button
               type="button"
               onClick={() => setRepoDropdownOpen((prev) => !prev)}
-              className="flex w-full items-center justify-between rounded-[8px] border border-[#202838] bg-[#141B27] px-2.5 py-2 text-left font-inter text-[12.5px] font-medium text-[#E5E7EB] transition-colors hover:border-[#2E3A4F] hover:bg-[#192231] cursor-pointer"
+              className="flex w-full items-center justify-between rounded-[8px] border border-[#272727] bg-[#1a1a1a] px-2.5 py-2 text-left font-inter text-[12.5px] font-medium text-[#e5e5e5] transition-colors hover:border-[#393939] hover:bg-[#212121] cursor-pointer"
             >
               <div className="flex min-w-0 items-center gap-2">
                 {activeRepo && isLocalRepo(activeRepo.repo_url) ? (
-                  <Laptop className="h-3.5 w-3.5 shrink-0 text-[#7DB4FF]" />
+                  <Laptop className="h-3.5 w-3.5 shrink-0 text-[#d4d4d4]" />
                 ) : (
-                  <GitHubIcon className="h-3.5 w-3.5 shrink-0 text-[#E5E7EB]" />
+                  <GitHubIcon className="h-3.5 w-3.5 shrink-0 text-[#e5e5e5]" />
                 )}
                 <span className="truncate">
                   {activeRepo
@@ -179,29 +179,29 @@ export default function Sidebar({
               </div>
               <ChevronDown
                 className={cn(
-                  "h-3.5 w-3.5 shrink-0 text-[#9CA3AF] transition-transform",
+                  "h-3.5 w-3.5 shrink-0 text-[#a3a3a3] transition-transform",
                   repoDropdownOpen && "rotate-180"
                 )}
               />
             </button>
 
             {repoDropdownOpen && (
-              <div className="absolute top-full left-0 z-40 mt-1.5 w-full rounded-[10px] border border-[#243041] bg-[#111827] p-1.5 shadow-2xl">
+              <div className="absolute top-full left-0 z-40 mt-1.5 w-full rounded-[10px] border border-[#2a2a2a] bg-[#111111] p-1.5 shadow-2xl">
                 {repos.length > 4 && (
                   <div className="relative mb-1.5">
-                    <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-[#6B7280]" />
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-[#858585]" />
                     <input
                       type="text"
                       placeholder="Filter repos..."
                       value={repoSearch}
                       onChange={(e) => setRepoSearch(e.target.value)}
-                      className="w-full rounded-[6px] border border-[#202838] bg-[#0B0F16] py-1 pl-7 pr-6 font-inter text-[11.5px] text-[#E5E7EB] placeholder:text-[#6B7280] focus:border-[#7DB4FF] focus:outline-none"
+                      className="w-full rounded-[6px] border border-[#272727] bg-[#000000] py-1 pl-7 pr-6 font-inter text-[11.5px] text-[#e5e5e5] placeholder:text-[#858585] focus:border-[#d4d4d4] focus:outline-none"
                     />
                     {repoSearch && (
                       <button
                         type="button"
                         onClick={() => setRepoSearch("")}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-[#6B7280] hover:text-white cursor-pointer"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-[#858585] hover:text-white cursor-pointer"
                       >
                         <X className="h-3 w-3" />
                       </button>
@@ -211,7 +211,7 @@ export default function Sidebar({
 
                 <div className="max-h-56 overflow-y-auto space-y-0.5 landing-dark-code-scroll">
                   {filteredRepos.length === 0 ? (
-                    <div className="px-2.5 py-3 text-center font-inter text-[11.5px] text-[#6B7280]">
+                    <div className="px-2.5 py-3 text-center font-inter text-[11.5px] text-[#858585]">
                       {repos.length === 0
                         ? "No repositories mounted"
                         : "No matching repositories"}
@@ -233,13 +233,13 @@ export default function Sidebar({
                           className={cn(
                             "group flex w-full items-center justify-between gap-1.5 rounded-[6px] px-2 py-1.5 text-left font-inter text-[12px] transition-colors cursor-pointer",
                             isSelected
-                              ? "bg-[#1A2232] font-medium text-white"
-                              : "text-[#9CA3AF] hover:bg-[#1A2232]/60 hover:text-white"
+                              ? "bg-[#202020] font-medium text-white"
+                              : "text-[#a3a3a3] hover:bg-[#202020]/60 hover:text-white"
                           )}
                         >
                           <div className="flex min-w-0 items-center gap-2">
                             {local ? (
-                              <Laptop className="h-3.5 w-3.5 shrink-0 text-[#7DB4FF]" />
+                              <Laptop className="h-3.5 w-3.5 shrink-0 text-[#d4d4d4]" />
                             ) : (
                               <GitHubIcon className="h-3.5 w-3.5 shrink-0 opacity-80" />
                             )}
@@ -247,7 +247,7 @@ export default function Sidebar({
                               <div className="truncate">
                                 {formatRepoName(repo.repo_url)}
                               </div>
-                              <div className="flex items-center gap-1.5 font-mono text-[10px] text-[#6B7280]">
+                              <div className="flex items-center gap-1.5 font-mono text-[10px] text-[#858585]">
                                 <GitBranch className="h-2.5 w-2.5" />
                                 <span>{repo.branch || "main"}</span>
                               </div>
@@ -264,13 +264,13 @@ export default function Sidebar({
                                 }}
                                 disabled={isReindexing || isDeletingThis}
                                 title="Sync changes"
-                                className="rounded p-1 text-[#9CA3AF] hover:bg-[#243041] hover:text-white cursor-pointer"
+                                className="rounded p-1 text-[#a3a3a3] hover:bg-[#2a2a2a] hover:text-white cursor-pointer"
                               >
                                 <RefreshCw
                                   className={cn(
                                     "h-3 w-3",
                                     isReindexing &&
-                                      "animate-spin text-[#7DB4FF]"
+                                      "animate-spin text-[#d4d4d4]"
                                   )}
                                 />
                               </button>
@@ -284,7 +284,7 @@ export default function Sidebar({
                               }}
                               disabled={isDeletingThis}
                               title="Delete repository"
-                              className="rounded p-1 text-[#6B7280] opacity-0 group-hover:opacity-100 hover:bg-red-500/15 hover:text-red-400 transition-opacity cursor-pointer"
+                              className="rounded p-1 text-[#858585] opacity-0 group-hover:opacity-100 hover:bg-red-500/15 hover:text-red-400 transition-opacity cursor-pointer"
                             >
                               {isDeletingThis ? (
                                 <Loader2 className="h-3 w-3 animate-spin text-red-400" />
@@ -293,7 +293,7 @@ export default function Sidebar({
                               )}
                             </button>
                             {isSelected && (
-                              <Check className="h-3.5 w-3.5 text-[#7DB4FF]" />
+                              <Check className="h-3.5 w-3.5 text-[#d4d4d4]" />
                             )}
                           </div>
                         </div>
@@ -302,14 +302,14 @@ export default function Sidebar({
                   )}
                 </div>
 
-                <div className="mt-1 border-t border-[#1E2636] pt-1">
+                <div className="mt-1 border-t border-[#262626] pt-1">
                   <button
                     type="button"
                     onClick={() => {
                       setRepoDropdownOpen(false);
                       onOpenIngestModal();
                     }}
-                    className="flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 font-inter text-[12px] text-[#7DB4FF] transition-colors hover:bg-[#1A2232] cursor-pointer"
+                    className="flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 font-inter text-[12px] text-[#d4d4d4] transition-colors hover:bg-[#202020] cursor-pointer"
                   >
                     <Plus className="h-3.5 w-3.5" />
                     <span>Add repository</span>
@@ -322,7 +322,7 @@ export default function Sidebar({
 
         {/* Middle Section: Flat List of Chat Threads */}
         <div className="flex items-center justify-between px-3.5 pt-3 pb-1.5">
-          <span className="font-inter text-[11px] font-medium text-[#6B7280]">
+          <span className="font-inter text-[11px] font-medium text-[#858585]">
             Threads
           </span>
           {activeRepo && onNewChat && (
@@ -330,7 +330,7 @@ export default function Sidebar({
               type="button"
               onClick={onNewChat}
               disabled={isCreatingChat || isSending}
-              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-inter text-[11px] font-medium text-[#9CA3AF] transition-colors hover:bg-[#1A2232] hover:text-white disabled:opacity-40 cursor-pointer"
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-inter text-[11px] font-medium text-[#a3a3a3] transition-colors hover:bg-[#202020] hover:text-white disabled:opacity-40 cursor-pointer"
             >
               <Plus className="h-3 w-3" />
               <span>New</span>
@@ -340,11 +340,11 @@ export default function Sidebar({
 
         <div className="flex-1 overflow-y-auto px-2.5 py-1 space-y-0.5 landing-dark-code-scroll">
           {!activeRepo ? (
-            <div className="px-2 py-6 text-center font-inter text-[12px] text-[#6B7280]">
+            <div className="px-2 py-6 text-center font-inter text-[12px] text-[#858585]">
               Connect a repository to start chatting.
             </div>
           ) : conversations.length === 0 ? (
-            <div className="px-2 py-6 text-center font-inter text-[12px] text-[#6B7280]">
+            <div className="px-2 py-6 text-center font-inter text-[12px] text-[#858585]">
               No threads yet. Ask a question to begin.
             </div>
           ) : (
@@ -358,8 +358,8 @@ export default function Sidebar({
                   className={cn(
                     "group flex w-full items-center justify-between gap-2 rounded-[7px] px-2.5 py-1.5 text-left font-inter text-[12.5px] transition-colors cursor-pointer",
                     isCurrent
-                      ? "bg-[#222B3B] font-medium text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
-                      : "text-[#9CA3AF] hover:bg-[#161D2A] hover:text-[#E5E7EB]"
+                      ? "bg-[#2a2a2a] font-medium text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+                      : "text-[#a3a3a3] hover:bg-[#1c1c1c] hover:text-[#e5e5e5]"
                   )}
                 >
                   <div className="flex min-w-0 items-center gap-2">
@@ -369,7 +369,7 @@ export default function Sidebar({
                     </span>
                   </div>
                   {chat.updated_at && (
-                    <span className="shrink-0 font-mono text-[10px] text-[#6B7280] opacity-0 group-hover:opacity-100 transition-opacity">
+                    <span className="shrink-0 font-mono text-[10px] text-[#858585] opacity-0 group-hover:opacity-100 transition-opacity">
                       {formatRelativeTime(chat.updated_at || chat.created_at)}
                     </span>
                   )}
@@ -380,18 +380,18 @@ export default function Sidebar({
         </div>
 
         {/* Bottom Section: "+ Add repository" + Compact User Profile */}
-        <div className="border-t border-[#1E2636] p-2.5 space-y-1.5">
+        <div className="border-t border-[#262626] p-2.5 space-y-1.5">
           <button
             type="button"
             onClick={onOpenIngestModal}
-            className="flex w-full items-center gap-2 rounded-[7px] px-2.5 py-1.5 font-inter text-[12.5px] font-normal text-[#9CA3AF] transition-colors hover:bg-[#161D2A] hover:text-[#E5E7EB] cursor-pointer"
+            className="flex w-full items-center gap-2 rounded-[7px] px-2.5 py-1.5 font-inter text-[12.5px] font-normal text-[#a3a3a3] transition-colors hover:bg-[#1c1c1c] hover:text-[#e5e5e5] cursor-pointer"
           >
             <Plus className="h-3.5 w-3.5" />
             <span>Add repository</span>
           </button>
 
           {user ? (
-            <div className="flex items-center justify-between gap-2 rounded-[7px] border border-[#1B2230] bg-[#121722] px-2.5 py-1.5">
+            <div className="flex items-center justify-between gap-2 rounded-[7px] border border-[#222222] bg-[#171717] px-2.5 py-1.5">
               <div className="flex min-w-0 items-center gap-2">
                 <div className="relative shrink-0">
                   {user.avatarUrl ? (
@@ -402,7 +402,7 @@ export default function Sidebar({
                       className="h-6 w-6 rounded-full object-cover"
                     />
                   ) : (
-                    <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#263042] font-inter text-[11px] font-medium text-[#D1D5DB]">
+                    <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#2f2f2f] font-inter text-[11px] font-medium text-[#d4d4d4]">
                       {(user.name || user.email || "U")[0].toUpperCase()}
                     </div>
                   )}
@@ -415,9 +415,9 @@ export default function Sidebar({
                         : "Check Configuration"
                     }
                     className={cn(
-                      "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-[#121722]",
+                      "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-[#171717]",
                       health?.loading
-                        ? "bg-[#7DB4FF]"
+                        ? "bg-[#d4d4d4]"
                         : health?.ok
                         ? "bg-emerald-400"
                         : "bg-amber-400"
@@ -425,7 +425,7 @@ export default function Sidebar({
                   />
                 </div>
                 <div className="min-w-0">
-                  <div className="truncate font-inter text-[12px] font-medium text-[#E5E7EB]">
+                  <div className="truncate font-inter text-[12px] font-medium text-[#e5e5e5]">
                     {user.name || "Developer"}
                   </div>
                 </div>
@@ -438,7 +438,7 @@ export default function Sidebar({
                       type="button"
                       onClick={onSignOut}
                       aria-label="Sign out"
-                      className="rounded p-1 text-[#6B7280] transition-colors hover:bg-[#1E2636] hover:text-[#E5E7EB] cursor-pointer"
+                      className="rounded p-1 text-[#858585] transition-colors hover:bg-[#262626] hover:text-[#e5e5e5] cursor-pointer"
                     >
                       <LogOut className="h-3.5 w-3.5" />
                     </button>
@@ -453,10 +453,10 @@ export default function Sidebar({
                 type="button"
                 onClick={onGoogleSignIn}
                 disabled={isAuthenticating}
-                className="flex w-full items-center justify-center gap-2 rounded-[7px] border border-[#243041] bg-[#141B27] px-2.5 py-1.5 font-inter text-[12px] font-medium text-[#E5E7EB] transition-colors hover:border-[#2E3B52] hover:bg-[#1A2232] hover:text-white disabled:opacity-50 cursor-pointer"
+                className="flex w-full items-center justify-center gap-2 rounded-[7px] border border-[#2a2a2a] bg-[#1a1a1a] px-2.5 py-1.5 font-inter text-[12px] font-medium text-[#e5e5e5] transition-colors hover:border-[#3a3a3a] hover:bg-[#202020] hover:text-white disabled:opacity-50 cursor-pointer"
               >
                 {isAuthenticating ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-[#7DB4FF]" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-[#d4d4d4]" />
                 ) : null}
                 <span>Sign in with Google</span>
               </button>
@@ -471,7 +471,7 @@ export default function Sidebar({
             if (!open && !deletingRepoId) setRepoPendingDelete(null);
           }}
         >
-          <DialogContent className="sm:max-w-[420px] rounded-[16px] border border-[#243041] bg-[#111827] text-[#E5E7EB]">
+          <DialogContent className="sm:max-w-[420px] rounded-[16px] border border-[#2a2a2a] bg-[#111111] text-[#e5e5e5]">
             <DialogHeader>
               <div className="flex items-center gap-3">
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-red-500/30 bg-red-500/10 text-red-400">
@@ -483,7 +483,7 @@ export default function Sidebar({
                   </DialogTitle>
                 </div>
               </div>
-              <DialogDescription className="pt-2 text-left font-inter text-[13px] leading-relaxed text-[#9CA3AF]">
+              <DialogDescription className="pt-2 text-left font-inter text-[13px] leading-relaxed text-[#a3a3a3]">
                 This will permanently remove{" "}
                 <span className="font-mono font-medium text-white">
                   {repoPendingDelete
@@ -499,7 +499,7 @@ export default function Sidebar({
                 type="button"
                 onClick={() => setRepoPendingDelete(null)}
                 disabled={Boolean(deletingRepoId)}
-                className="rounded-[8px] border border-[#243041] bg-[#171F2E] px-3.5 py-1.5 font-inter text-[12.5px] font-medium text-[#D1D5DB] hover:bg-[#1F293C] hover:text-white cursor-pointer"
+                className="rounded-[8px] border border-[#2a2a2a] bg-[#1e1e1e] px-3.5 py-1.5 font-inter text-[12.5px] font-medium text-[#d4d4d4] hover:bg-[#282828] hover:text-white cursor-pointer"
               >
                 Cancel
               </button>

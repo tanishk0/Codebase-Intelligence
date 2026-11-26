@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 const FILE_REF_REGEX = /^\[?[a-zA-Z0-9_./-]+:L\d+(?:-L?\d+)?\]?$/;
 const GLOBAL_FILE_REF_REGEX = /`?\[?([a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+):L(\d+(?:-L?\d+)?)\]?`?/g;
 
-function DiamondSparkleIcon({ className = "w-4 h-4 text-[#5899FA]" }) {
+function DiamondSparkleIcon({ className = "w-4 h-4 text-[#e5e5e5]" }) {
   return (
     <svg
       className={className}
@@ -49,17 +49,17 @@ function CodeBlock({ inline, className, children, ...props }) {
     if (FILE_REF_REGEX.test(rawText.trim())) {
       return (
         <span
-          className="mx-0.5 inline-flex items-center gap-1 rounded-[5px] border border-[#283548] bg-[#151D2A] px-1.5 py-0.5 font-mono text-[11.5px] font-medium text-[#7DB4FF] align-baseline"
+          className="mx-0.5 inline-flex items-center gap-1 rounded-[5px] border border-[#343434] bg-[#1c1c1c] px-1.5 py-0.5 font-mono text-[11.5px] font-medium text-[#d4d4d4] align-baseline"
           title={`Source reference: ${cleanRef}`}
         >
-          <FileText className="h-3 w-3 shrink-0 text-[#7DB4FF]" />
+          <FileText className="h-3 w-3 shrink-0 text-[#d4d4d4]" />
           <span>{cleanRef}</span>
         </span>
       );
     }
     return (
       <code
-        className="mx-0.5 inline-block rounded-[4px] border border-[#283244] bg-[#1B2230] px-1.5 py-0.5 font-mono text-[12px] font-medium text-[#E5E7EB]"
+        className="mx-0.5 inline-block rounded-[4px] border border-[#313131] bg-[#222222] px-1.5 py-0.5 font-mono text-[12px] font-medium text-[#e5e5e5]"
         {...props}
       >
         {children}
@@ -70,13 +70,13 @@ function CodeBlock({ inline, className, children, ...props }) {
   const language = match ? match[1] : "code";
 
   return (
-    <div className="my-3.5 overflow-hidden rounded-[10px] border border-[#243041] bg-[#0B0F16] text-[#E5E7EB]">
-      <div className="flex items-center justify-between border-b border-[#1E2636] bg-[#121722] px-3.5 py-1.5 font-mono text-[11px] text-[#9CA3AF]">
+    <div className="my-3.5 overflow-hidden rounded-[10px] border border-[#2a2a2a] bg-[#000000] text-[#e5e5e5]">
+      <div className="flex items-center justify-between border-b border-[#262626] bg-[#171717] px-3.5 py-1.5 font-mono text-[11px] text-[#a3a3a3]">
         <span className="lowercase">{language}</span>
         <button
           type="button"
           onClick={handleCopy}
-          className="inline-flex items-center gap-1.5 rounded px-2 py-0.5 font-inter text-[11px] text-[#9CA3AF] transition-colors hover:bg-[#1A2232] hover:text-white cursor-pointer"
+          className="inline-flex items-center gap-1.5 rounded px-2 py-0.5 font-inter text-[11px] text-[#a3a3a3] transition-colors hover:bg-[#202020] hover:text-white cursor-pointer"
         >
           {copied ? (
             <>
@@ -91,7 +91,7 @@ function CodeBlock({ inline, className, children, ...props }) {
           )}
         </button>
       </div>
-      <pre className="landing-dark-code-scroll overflow-x-auto p-3.5 font-mono text-[12.5px] leading-relaxed text-[#E5E7EB]">
+      <pre className="landing-dark-code-scroll overflow-x-auto p-3.5 font-mono text-[12.5px] leading-relaxed text-[#e5e5e5]">
         <code className={className} {...props}>
           {rawText}
         </code>
@@ -147,7 +147,7 @@ export default function MessageItem({ message }) {
         transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
         className="flex justify-end"
       >
-        <div className="max-w-[78%] rounded-[10px] border border-[#2B3548]/80 bg-[#222938] px-4 py-2.5 font-inter text-[13.5px] leading-relaxed text-[#E5E7EB]">
+        <div className="max-w-[78%] rounded-[10px] border border-[#343434]/80 bg-[#292929] px-4 py-2.5 font-inter text-[13.5px] leading-relaxed text-[#e5e5e5]">
           <div className="whitespace-pre-wrap break-words">
             {message.content}
           </div>
@@ -161,11 +161,11 @@ export default function MessageItem({ message }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
-      className="group relative rounded-[12px] border border-[#1E2634] bg-[#10141D]/90 p-4 sm:p-5"
+      className="group relative rounded-[12px] border border-[#252525] bg-[#111111]/90 p-4 sm:p-5"
     >
       <div className="flex items-start gap-3">
         <div className="mt-1 flex h-4 w-4 shrink-0 items-center justify-center">
-          <DiamondSparkleIcon className="h-4 w-4 text-[#5899FA]" />
+          <DiamondSparkleIcon className="h-4 w-4 text-[#e5e5e5]" />
         </div>
 
         <div className="min-w-0 flex-1">
@@ -174,7 +174,7 @@ export default function MessageItem({ message }) {
               <button
                 type="button"
                 onClick={handleCopyMessage}
-                className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 font-inter text-[11px] text-[#6B7280] opacity-0 group-hover:opacity-100 transition-all hover:bg-[#1A2232] hover:text-[#E5E7EB] cursor-pointer"
+                className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 font-inter text-[11px] text-[#858585] opacity-0 group-hover:opacity-100 transition-all hover:bg-[#202020] hover:text-[#e5e5e5] cursor-pointer"
                 title="Copy response"
               >
                 {copiedMessage ? (
@@ -193,7 +193,7 @@ export default function MessageItem({ message }) {
           )}
 
           {isStreaming && !message.content ? (
-            <div className="flex items-center gap-3 py-1 font-inter text-[13px] text-[#9CA3AF]">
+            <div className="flex items-center gap-3 py-1 font-inter text-[13px] text-[#a3a3a3]">
               <div className="thinking-dots">
                 <span />
                 <span />
@@ -217,11 +217,11 @@ export default function MessageItem({ message }) {
 
           {/* Extracted Sources Disclosure (matching Landing Page preview) */}
           {extractedSources.length > 0 && (
-            <div className="mt-4 border-t border-[#1B2230] pt-3">
+            <div className="mt-4 border-t border-[#222222] pt-3">
               <button
                 type="button"
                 onClick={() => setSourcesOpen((prev) => !prev)}
-                className="flex items-center gap-1.5 font-inter text-[11.5px] font-medium text-[#9CA3AF] transition-colors hover:text-white cursor-pointer"
+                className="flex items-center gap-1.5 font-inter text-[11.5px] font-medium text-[#a3a3a3] transition-colors hover:text-white cursor-pointer"
               >
                 <span>• Sources ({extractedSources.length})</span>
                 <ChevronDown
@@ -237,19 +237,19 @@ export default function MessageItem({ message }) {
                   {extractedSources.map((src) => (
                     <div
                       key={`${src.path}:${src.lines}`}
-                      className="flex items-center justify-between rounded-[8px] border border-[#202837] bg-[#141923] px-3 py-1.5 text-[12px] transition-colors hover:border-[#2E3A4F] hover:bg-[#1A2130]"
+                      className="flex items-center justify-between rounded-[8px] border border-[#272727] bg-[#191919] px-3 py-1.5 text-[12px] transition-colors hover:border-[#393939] hover:bg-[#212121]"
                     >
                       <div className="flex items-center gap-2 truncate pr-2">
-                        <FileText className="h-3.5 w-3.5 shrink-0 text-[#9CA3AF]" />
-                        <span className="truncate font-inter text-[#D1D5DB]">
+                        <FileText className="h-3.5 w-3.5 shrink-0 text-[#a3a3a3]" />
+                        <span className="truncate font-inter text-[#d4d4d4]">
                           {src.path}
                         </span>
                       </div>
                       <div className="flex shrink-0 items-center gap-1.5">
-                        <span className="rounded-[4px] bg-[#1F2735] px-1.5 py-0.5 font-mono text-[10.5px] text-[#9CA3AF]">
+                        <span className="rounded-[4px] bg-[#262626] px-1.5 py-0.5 font-mono text-[10.5px] text-[#a3a3a3]">
                           {src.lines}
                         </span>
-                        <ArrowUpRight className="h-3.5 w-3.5 text-[#6B7280]" />
+                        <ArrowUpRight className="h-3.5 w-3.5 text-[#858585]" />
                       </div>
                     </div>
                   ))}

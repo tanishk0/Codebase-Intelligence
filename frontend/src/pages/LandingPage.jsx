@@ -37,8 +37,8 @@ function GitHubIcon({ className = "w-4 h-4" }) {
   );
 }
 
-// 4-Point Diamond Sparkle Icon (accent blue #5899FA / #7DB4FF)
-function DiamondSparkleIcon({ className = "w-4 h-4 text-[#5899FA]" }) {
+// 4-Point Diamond Sparkle Icon (neutral silver accent)
+function DiamondSparkleIcon({ className = "w-4 h-4 text-[#e5e5e5]" }) {
   return (
     <svg
       className={className}
@@ -81,7 +81,7 @@ function FormattedAnswerText({ text }) {
           return (
             <code
               key={i}
-              className="mx-0.5 inline-block rounded-[4px] border border-[#283244] bg-[#1B2230] px-1.5 py-0.2 font-mono text-[11px] font-medium text-[#E5E7EB]"
+              className="mx-0.5 inline-block rounded-[4px] border border-[#313131] bg-[#222222] px-1.5 py-0.2 font-mono text-[11px] font-medium text-[#e5e5e5]"
             >
               {code}
             </code>
@@ -288,8 +288,8 @@ export default function LandingPage({
     const prevRootBg = root.style.backgroundColor;
     const hadDark = root.classList.contains("dark");
 
-    document.body.style.backgroundColor = "#0B0F16";
-    root.style.backgroundColor = "#0B0F16";
+    document.body.style.backgroundColor = "#000000";
+    root.style.backgroundColor = "#000000";
     root.classList.add("dark");
 
     return () => {
@@ -309,7 +309,7 @@ export default function LandingPage({
   };
 
   return (
-    <div className="landing-dark-canvas flex h-screen w-full flex-col justify-between overflow-y-auto overflow-x-hidden bg-[#0B0F16] text-[#E5E7EB]">
+    <div className="landing-dark-canvas flex h-screen w-full flex-col justify-between overflow-y-auto overflow-x-hidden bg-[#000000] text-[#e5e5e5]">
       {/* ====================================================================
           TOP NAVIGATION HEADER
           ==================================================================== */}
@@ -344,7 +344,7 @@ export default function LandingPage({
                 key={item.id}
                 type="button"
                 onClick={() => setActiveNavModal(item.id)}
-                className="font-inter text-[13.5px] font-normal text-[#D1D5DB] transition-colors hover:text-white cursor-pointer"
+                className="font-inter text-[13.5px] font-normal text-[#d4d4d4] transition-colors hover:text-white cursor-pointer"
               >
                 {item.label}
               </button>
@@ -358,7 +358,7 @@ export default function LandingPage({
             href="https://github.com"
             target="_blank"
             rel="noreferrer"
-            className="hidden items-center gap-2 font-inter text-[13.5px] font-medium text-[#E5E7EB] transition-colors hover:text-white sm:flex"
+            className="hidden items-center gap-2 font-inter text-[13.5px] font-medium text-[#e5e5e5] transition-colors hover:text-white sm:flex"
           >
             <GitHubIcon className="h-4 w-4" />
             <span>GitHub</span>
@@ -397,22 +397,22 @@ export default function LandingPage({
           >
             {/* Eyebrow Label with Hairline */}
             <motion.div variants={fadeUpItemVariants} className="flex items-center gap-3.5">
-              <span className="font-inter text-[11px] font-medium tracking-[0.16em] uppercase text-[#9CA3AF]">
+              <span className="font-inter text-[11px] font-medium tracking-[0.16em] uppercase text-[#a3a3a3]">
                 AI FOR CODEBASES
               </span>
-              <span className="inline-block h-[1px] w-7 bg-[#243041]" />
+              <span className="inline-block h-[1px] w-7 bg-[#2a2a2a]" />
             </motion.div>
 
             {/* Main Editorial Headline in Fraunces */}
             <motion.h1
               variants={fadeUpItemVariants}
-              className="font-fraunces mt-5 mb-5 text-[48px] font-normal leading-[1.04] tracking-[-0.025em] text-[#F3F4F6] sm:text-[58px] lg:text-[62px] xl:text-[68px]"
+              className="font-fraunces mt-5 mb-5 text-[48px] font-normal leading-[1.04] tracking-[-0.025em] text-[#f5f5f5] sm:text-[58px] lg:text-[62px] xl:text-[68px]"
             >
               Understand
               <br />
               <span className="whitespace-nowrap">your codebase,</span>
               <br />
-              <span className="italic font-normal text-[#7DB4FF]">
+              <span className="italic font-normal text-[#d4d4d4]">
                 instantly.
               </span>
             </motion.h1>
@@ -420,7 +420,7 @@ export default function LandingPage({
             {/* Subtitle Description in Inter */}
             <motion.p
               variants={fadeUpItemVariants}
-              className="mb-7 max-w-[400px] font-inter text-[15px] leading-[1.58] text-[#9CA3AF] lg:text-[16px]"
+              className="mb-7 max-w-[400px] font-inter text-[15px] leading-[1.58] text-[#a3a3a3] lg:text-[16px]"
             >
               Ask questions about your repository and get source-grounded
               answers with file citations.
@@ -472,57 +472,57 @@ export default function LandingPage({
                     e.currentTarget.src = "/hero-3d-dark.png";
                   }}
                   alt="Signature 3D Form"
-                  className="h-auto w-full object-contain"
+                  className="h-auto w-full object-contain grayscale"
                 />
               </div>
 
               {/* Interactive Workspace Window Card */}
-              <div className="landing-dark-window relative z-10 w-full overflow-hidden rounded-[16px] border border-[#243041] bg-[#131822]/95 backdrop-blur-md">
+              <div className="landing-dark-window relative z-10 w-full overflow-hidden rounded-[16px] border border-[#2a2a2a] bg-[#141414]/95 backdrop-blur-md">
                 {/* Window Header Bar */}
-                <div className="flex h-11 items-center justify-between border-b border-[#202736] bg-[#131822] px-4">
+                <div className="flex h-11 items-center justify-between border-b border-[#272727] bg-[#141414] px-4">
                   <div className="flex items-center gap-2.5">
                     <ArclineIcon className="h-5 w-5" />
-                    <span className="font-inter text-[13.5px] font-semibold tracking-tight text-[#F3F4F6]">
+                    <span className="font-inter text-[13.5px] font-semibold tracking-tight text-[#f5f5f5]">
                       Arcline
                     </span>
                   </div>
 
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1">
-                      <span className="flex h-5 min-w-[20px] items-center justify-center rounded-[4px] border border-[#263042] bg-[#1A2130] px-1 font-inter text-[10px] font-medium text-[#9CA3AF]">
+                      <span className="flex h-5 min-w-[20px] items-center justify-center rounded-[4px] border border-[#2f2f2f] bg-[#212121] px-1 font-inter text-[10px] font-medium text-[#a3a3a3]">
                         ⌘
                       </span>
-                      <span className="flex h-5 min-w-[20px] items-center justify-center rounded-[4px] border border-[#263042] bg-[#1A2130] px-1.5 font-inter text-[10px] font-medium text-[#9CA3AF]">
+                      <span className="flex h-5 min-w-[20px] items-center justify-center rounded-[4px] border border-[#2f2f2f] bg-[#212121] px-1.5 font-inter text-[10px] font-medium text-[#a3a3a3]">
                         K
                       </span>
                     </div>
-                    <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#263042] font-inter text-[11px] font-medium text-[#D1D5DB]">
+                    <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#2f2f2f] font-inter text-[11px] font-medium text-[#d4d4d4]">
                       {user ? (user.name || "U")[0].toUpperCase() : "T"}
                     </div>
                   </div>
                 </div>
 
                 {/* Window Main Layout: Compact Left Sidebar (~25%) + Right Chat Area (~75%) */}
-                <div className="grid min-h-[340px] grid-cols-1 divide-y divide-[#202736] sm:grid-cols-[156px_1fr] sm:divide-x sm:divide-y-0 lg:grid-cols-[164px_1fr]">
+                <div className="grid min-h-[340px] grid-cols-1 divide-y divide-[#272727] sm:grid-cols-[156px_1fr] sm:divide-x sm:divide-y-0 lg:grid-cols-[164px_1fr]">
                   {/* Window Left Sidebar */}
-                  <div className="flex flex-col justify-between bg-[#121721] p-3">
+                  <div className="flex flex-col justify-between bg-[#171717] p-3">
                     <div className="space-y-2.5">
                       {/* Repository Selector Row */}
                       <div className="relative">
                         <button
                           type="button"
                           onClick={() => setRepoDropdownOpen((prev) => !prev)}
-                          className="flex w-full items-center justify-between rounded-[7px] px-2 py-1.5 font-inter text-[12px] font-medium text-[#E5E7EB] transition-colors hover:bg-[#1A2232]/70 cursor-pointer"
+                          className="flex w-full items-center justify-between rounded-[7px] px-2 py-1.5 font-inter text-[12px] font-medium text-[#e5e5e5] transition-colors hover:bg-[#202020]/70 cursor-pointer"
                         >
                           <div className="flex items-center gap-2 truncate">
-                            <GitHubIcon className="h-3.5 w-3.5 text-[#E5E7EB]" />
+                            <GitHubIcon className="h-3.5 w-3.5 text-[#e5e5e5]" />
                             <span className="truncate">{activeRepoName}</span>
                           </div>
-                          <ChevronDown className="h-3.5 w-3.5 text-[#9CA3AF]" />
+                          <ChevronDown className="h-3.5 w-3.5 text-[#a3a3a3]" />
                         </button>
 
                         {repoDropdownOpen && (
-                          <div className="absolute top-full left-0 z-30 mt-1 w-full rounded-[8px] border border-[#243041] bg-[#111827] p-1 shadow-2xl">
+                          <div className="absolute top-full left-0 z-30 mt-1 w-full rounded-[8px] border border-[#2a2a2a] bg-[#111111] p-1 shadow-2xl">
                             {["my-repo", "arcline-core", "express-api"].map(
                               (r) => (
                                 <button
@@ -535,13 +535,13 @@ export default function LandingPage({
                                   className={cn(
                                     "flex w-full items-center justify-between rounded-[5px] px-2 py-1 text-left font-inter text-[11.5px] cursor-pointer",
                                     activeRepoName === r
-                                      ? "bg-[#1A2232] font-medium text-white"
-                                      : "text-[#9CA3AF] hover:bg-[#1A2232]/60 hover:text-white"
+                                      ? "bg-[#202020] font-medium text-white"
+                                      : "text-[#a3a3a3] hover:bg-[#202020]/60 hover:text-white"
                                   )}
                                 >
                                   <span>{r}</span>
                                   {activeRepoName === r && (
-                                    <Check className="h-3 w-3 text-[#7DB4FF]" />
+                                    <Check className="h-3 w-3 text-[#d4d4d4]" />
                                   )}
                                 </button>
                               )
@@ -568,8 +568,8 @@ export default function LandingPage({
                               className={cn(
                                 "flex w-full items-center gap-2.5 rounded-[7px] px-2.5 py-1.5 font-inter text-[12px] transition-colors cursor-pointer",
                                 isCurrent
-                                  ? "bg-[#222B3B] font-medium text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
-                                  : "text-[#9CA3AF] hover:bg-[#1A2232]/50 hover:text-[#E5E7EB]"
+                                  ? "bg-[#2a2a2a] font-medium text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+                                  : "text-[#a3a3a3] hover:bg-[#202020]/50 hover:text-[#e5e5e5]"
                               )}
                             >
                               <Icon className="h-3.5 w-3.5 opacity-85" />
@@ -585,7 +585,7 @@ export default function LandingPage({
                       <button
                         type="button"
                         onClick={onEnterWorkspace}
-                        className="flex items-center gap-2 px-2 py-1 font-inter text-[11.5px] font-normal text-[#9CA3AF] transition-colors hover:text-[#E5E7EB] cursor-pointer"
+                        className="flex items-center gap-2 px-2 py-1 font-inter text-[11.5px] font-normal text-[#a3a3a3] transition-colors hover:text-[#e5e5e5] cursor-pointer"
                       >
                         <Plus className="h-3.5 w-3.5" />
                         <span>Add repository</span>
@@ -594,25 +594,25 @@ export default function LandingPage({
                   </div>
 
                   {/* Window Right Area (Chat / Content View) */}
-                  <div className="flex flex-col justify-between bg-[#131822] p-4">
+                  <div className="flex flex-col justify-between bg-[#141414] p-4">
                     {activeTab === "chat" && (
                       <div className="flex h-full flex-col justify-between">
                         <div className="space-y-3">
                           {/* User Message Bubble (Right-Aligned) */}
                           <div className="flex justify-end">
-                            <div className="rounded-[10px] border border-[#2B3548]/80 bg-[#222938] px-3.5 py-2 font-inter text-[12px] text-[#E5E7EB]">
+                            <div className="rounded-[10px] border border-[#343434]/80 bg-[#292929] px-3.5 py-2 font-inter text-[12px] text-[#e5e5e5]">
                               {currentQuery.userPrompt}
                             </div>
                           </div>
 
                           {/* Assistant Response + Sources Outer Container Card */}
-                          <div className="rounded-[12px] border border-[#1E2634] bg-[#10141D]/80 p-3.5">
+                          <div className="rounded-[12px] border border-[#252525] bg-[#111111]/80 p-3.5">
                             <div className="flex items-start gap-2.5">
                               <div className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
-                                <DiamondSparkleIcon className="h-4 w-4 text-[#5899FA]" />
+                                <DiamondSparkleIcon className="h-4 w-4 text-[#e5e5e5]" />
                               </div>
                               <div className="min-w-0 flex-1">
-                                <p className="font-inter text-[12px] leading-[1.6] text-[#D1D5DB]">
+                                <p className="font-inter text-[12px] leading-[1.6] text-[#d4d4d4]">
                                   <FormattedAnswerText
                                     text={currentQuery.answer}
                                   />
@@ -625,7 +625,7 @@ export default function LandingPage({
                                     onClick={() =>
                                       setSourcesOpen((prev) => !prev)
                                     }
-                                    className="flex items-center gap-1.5 font-inter text-[11px] font-medium text-[#9CA3AF] transition-colors hover:text-white cursor-pointer"
+                                    className="flex items-center gap-1.5 font-inter text-[11px] font-medium text-[#a3a3a3] transition-colors hover:text-white cursor-pointer"
                                   >
                                     <span>
                                       • Sources ({currentQuery.sources.length})
@@ -646,19 +646,19 @@ export default function LandingPage({
                                           onClick={() =>
                                             setInspectingSource(src)
                                           }
-                                          className="group flex items-center justify-between rounded-[8px] border border-[#202837] bg-[#141923] px-3 py-1.5 text-[11.5px] transition-colors hover:border-[#2E3A4F] hover:bg-[#1A2130] cursor-pointer"
+                                          className="group flex items-center justify-between rounded-[8px] border border-[#272727] bg-[#191919] px-3 py-1.5 text-[11.5px] transition-colors hover:border-[#393939] hover:bg-[#212121] cursor-pointer"
                                         >
                                           <div className="flex items-center gap-2 truncate pr-2">
-                                            <FileText className="h-3.5 w-3.5 shrink-0 text-[#9CA3AF]" />
-                                            <span className="truncate font-inter text-[#D1D5DB] group-hover:text-white">
+                                            <FileText className="h-3.5 w-3.5 shrink-0 text-[#a3a3a3]" />
+                                            <span className="truncate font-inter text-[#d4d4d4] group-hover:text-white">
                                               {src.path}
                                             </span>
                                           </div>
                                           <div className="flex shrink-0 items-center gap-2">
-                                            <span className="rounded-[4px] bg-[#1F2735] px-1.5 py-0.5 font-mono text-[10px] text-[#9CA3AF]">
+                                            <span className="rounded-[4px] bg-[#262626] px-1.5 py-0.5 font-mono text-[10px] text-[#a3a3a3]">
                                               {src.lines}
                                             </span>
-                                            <ArrowUpRight className="h-3.5 w-3.5 text-[#9CA3AF] transition-colors group-hover:text-white" />
+                                            <ArrowUpRight className="h-3.5 w-3.5 text-[#a3a3a3] transition-colors group-hover:text-white" />
                                           </div>
                                         </div>
                                       ))}
@@ -680,12 +680,12 @@ export default function LandingPage({
                             value={customInput}
                             onChange={(e) => setCustomInput(e.target.value)}
                             placeholder="Ask about your codebase..."
-                            className="w-full rounded-[10px] border border-[#222B3A] bg-[#171C28] py-2.5 pr-10 pl-3.5 font-inter text-[12px] text-[#E5E7EB] placeholder:text-[#6B7280] transition-colors focus:border-[#7DB4FF] focus:outline-none"
+                            className="w-full rounded-[10px] border border-[#2a2a2a] bg-[#1c1c1c] py-2.5 pr-10 pl-3.5 font-inter text-[12px] text-[#e5e5e5] placeholder:text-[#858585] transition-colors focus:border-[#d4d4d4] focus:outline-none"
                           />
                           <button
                             type="submit"
                             aria-label="Send query"
-                            className="absolute right-1.5 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-[7px] bg-[#E5E7EB] text-[#0B0F16] transition-colors hover:bg-white cursor-pointer"
+                            className="absolute right-1.5 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-[7px] bg-[#e5e5e5] text-[#000000] transition-colors hover:bg-white cursor-pointer"
                           >
                             <SendPlaneIcon className="h-3.5 w-3.5" />
                           </button>
@@ -697,10 +697,10 @@ export default function LandingPage({
                     {activeTab === "files" && (
                       <div className="flex h-full flex-col justify-between font-inter text-[12px]">
                         <div>
-                          <div className="mb-2 font-medium text-[#9CA3AF]">
+                          <div className="mb-2 font-medium text-[#a3a3a3]">
                             Repository Explorer // {activeRepoName}
                           </div>
-                          <div className="space-y-1 rounded-[10px] border border-[#243041] bg-[#0E1420]/60 p-2">
+                          <div className="space-y-1 rounded-[10px] border border-[#2a2a2a] bg-[#141414]/60 p-2">
                             {[
                               "src/controllers/auth.controller.js",
                               "src/middleware/protect.js",
@@ -715,9 +715,9 @@ export default function LandingPage({
                                     PRESET_QUERIES[0].sources[0]
                                   )
                                 }
-                                className="flex items-center gap-2 rounded-[6px] px-2 py-1.5 text-[#E5E7EB] transition-colors hover:bg-[#1A2232] cursor-pointer"
+                                className="flex items-center gap-2 rounded-[6px] px-2 py-1.5 text-[#e5e5e5] transition-colors hover:bg-[#202020] cursor-pointer"
                               >
-                                <FileText className="h-3.5 w-3.5 text-[#9CA3AF]" />
+                                <FileText className="h-3.5 w-3.5 text-[#a3a3a3]" />
                                 <span>{f}</span>
                               </div>
                             ))}
@@ -726,7 +726,7 @@ export default function LandingPage({
                         <button
                           type="button"
                           onClick={() => setActiveTab("chat")}
-                          className="pt-4 text-left text-[11.5px] font-medium text-[#7DB4FF] hover:underline cursor-pointer"
+                          className="pt-4 text-left text-[11.5px] font-medium text-[#d4d4d4] hover:underline cursor-pointer"
                         >
                           ← Back to Chat Q&A
                         </button>
@@ -737,21 +737,21 @@ export default function LandingPage({
                     {activeTab === "search" && (
                       <div className="flex h-full flex-col justify-between font-inter text-[12px]">
                         <div>
-                          <div className="mb-2 font-medium text-[#9CA3AF]">
+                          <div className="mb-2 font-medium text-[#a3a3a3]">
                             Exact Identifier & Symbol Search (BM25)
                           </div>
-                          <div className="space-y-2 rounded-[10px] border border-[#243041] bg-[#0E1420]/60 p-3">
-                            <div className="font-mono text-[11px] text-[#9CA3AF]">
+                          <div className="space-y-2 rounded-[10px] border border-[#2a2a2a] bg-[#141414]/60 p-3">
+                            <div className="font-mono text-[11px] text-[#a3a3a3]">
                               Matched 2 symbols for `protect`:
                             </div>
                             <div className="space-y-1.5 text-[11.5px]">
-                              <div className="rounded border border-[#243041] bg-[#1A2232] p-2">
+                              <div className="rounded border border-[#2a2a2a] bg-[#202020] p-2">
                                 <span className="font-semibold text-white">
                                   protect()
                                 </span>{" "}
                                 — src/middleware/protect.js:L1
                               </div>
-                              <div className="rounded border border-[#243041] bg-[#1A2232] p-2">
+                              <div className="rounded border border-[#2a2a2a] bg-[#202020] p-2">
                                 <span className="font-semibold text-white">
                                   signin()
                                 </span>{" "}
@@ -763,7 +763,7 @@ export default function LandingPage({
                         <button
                           type="button"
                           onClick={() => setActiveTab("chat")}
-                          className="pt-4 text-left text-[11.5px] font-medium text-[#7DB4FF] hover:underline cursor-pointer"
+                          className="pt-4 text-left text-[11.5px] font-medium text-[#d4d4d4] hover:underline cursor-pointer"
                         >
                           ← Back to Chat Q&A
                         </button>
@@ -774,7 +774,7 @@ export default function LandingPage({
                     {activeTab === "history" && (
                       <div className="flex h-full flex-col justify-between font-inter text-[12px]">
                         <div>
-                          <div className="mb-2 font-medium text-[#9CA3AF]">
+                          <div className="mb-2 font-medium text-[#a3a3a3]">
                             Saved Conversation Threads
                           </div>
                           <div className="space-y-1.5">
@@ -786,12 +786,12 @@ export default function LandingPage({
                                   setActiveQueryIdx(idx);
                                   setActiveTab("chat");
                                 }}
-                                className="w-full rounded-[8px] border border-[#243041] p-2 text-left transition-colors hover:bg-[#1A2232] cursor-pointer"
+                                className="w-full rounded-[8px] border border-[#2a2a2a] p-2 text-left transition-colors hover:bg-[#202020] cursor-pointer"
                               >
-                                <div className="truncate font-medium text-[#E5E7EB]">
+                                <div className="truncate font-medium text-[#e5e5e5]">
                                   {q.userPrompt}
                                 </div>
-                                <div className="text-[11px] text-[#9CA3AF]">
+                                <div className="text-[11px] text-[#a3a3a3]">
                                   {q.sources.length} citations · Grounded
                                 </div>
                               </button>
@@ -801,7 +801,7 @@ export default function LandingPage({
                         <button
                           type="button"
                           onClick={() => setActiveTab("chat")}
-                          className="pt-4 text-left text-[11.5px] font-medium text-[#7DB4FF] hover:underline cursor-pointer"
+                          className="pt-4 text-left text-[11.5px] font-medium text-[#d4d4d4] hover:underline cursor-pointer"
                         >
                           ← Back to Chat Q&A
                         </button>
@@ -827,14 +827,14 @@ export default function LandingPage({
         <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-center lg:px-4">
           {/* Step 01 */}
           <motion.div variants={footerStepVariants} className="flex items-center gap-4">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[#222B3A] bg-[#151B26] font-inter text-[12.5px] font-medium text-[#D1D5DB]">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[#2a2a2a] bg-[#1b1b1b] font-inter text-[12.5px] font-medium text-[#d4d4d4]">
               01
             </span>
             <div>
               <h2 className="font-inter text-[14.5px] font-semibold tracking-tight text-white">
                 Connect repository
               </h2>
-              <p className="mt-0.5 font-inter text-[13px] text-[#9CA3AF]">
+              <p className="mt-0.5 font-inter text-[13px] text-[#a3a3a3]">
                 Link your codebase in seconds.
               </p>
             </div>
@@ -843,19 +843,19 @@ export default function LandingPage({
           {/* Connector Line 1 */}
           <motion.div
             variants={footerStepVariants}
-            className="hidden h-[1px] w-16 bg-[#222B3A] md:block lg:w-24"
+            className="hidden h-[1px] w-16 bg-[#2a2a2a] md:block lg:w-24"
           />
 
           {/* Step 02 */}
           <motion.div variants={footerStepVariants} className="flex items-center gap-4">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[#222B3A] bg-[#151B26] font-inter text-[12.5px] font-medium text-[#D1D5DB]">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[#2a2a2a] bg-[#1b1b1b] font-inter text-[12.5px] font-medium text-[#d4d4d4]">
               02
             </span>
             <div>
               <h2 className="font-inter text-[14.5px] font-semibold tracking-tight text-white">
                 Ask questions
               </h2>
-              <p className="mt-0.5 font-inter text-[13px] text-[#9CA3AF]">
+              <p className="mt-0.5 font-inter text-[13px] text-[#a3a3a3]">
                 In natural language.
               </p>
             </div>
@@ -864,19 +864,19 @@ export default function LandingPage({
           {/* Connector Line 2 */}
           <motion.div
             variants={footerStepVariants}
-            className="hidden h-[1px] w-16 bg-[#222B3A] md:block lg:w-24"
+            className="hidden h-[1px] w-16 bg-[#2a2a2a] md:block lg:w-24"
           />
 
           {/* Step 03 */}
           <motion.div variants={footerStepVariants} className="flex items-center gap-4">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[#222B3A] bg-[#151B26] font-inter text-[12.5px] font-medium text-[#D1D5DB]">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[#2a2a2a] bg-[#1b1b1b] font-inter text-[12.5px] font-medium text-[#d4d4d4]">
               03
             </span>
             <div>
               <h2 className="font-inter text-[14.5px] font-semibold tracking-tight text-white">
                 Explore cited answers
               </h2>
-              <p className="mt-0.5 font-inter text-[13px] text-[#9CA3AF]">
+              <p className="mt-0.5 font-inter text-[13px] text-[#a3a3a3]">
                 With exact file references.
               </p>
             </div>
@@ -894,28 +894,28 @@ export default function LandingPage({
               initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.96 }}
-              className="relative w-full max-w-2xl rounded-[16px] border border-[#243041] bg-[#111827] p-6 shadow-2xl"
+              className="relative w-full max-w-2xl rounded-[16px] border border-[#2a2a2a] bg-[#111111] p-6 shadow-2xl"
             >
-              <div className="mb-4 flex items-center justify-between border-b border-[#243041] pb-4">
+              <div className="mb-4 flex items-center justify-between border-b border-[#2a2a2a] pb-4">
                 <div className="flex items-center gap-2.5">
-                  <FileText className="h-4 w-4 text-[#7DB4FF]" />
+                  <FileText className="h-4 w-4 text-[#d4d4d4]" />
                   <span className="font-inter text-[14px] font-semibold text-white">
                     {inspectingSource.path}
                   </span>
-                  <span className="rounded border border-[#243041] bg-[#1A2232] px-2 py-0.5 font-mono text-[11px] text-[#9CA3AF]">
+                  <span className="rounded border border-[#2a2a2a] bg-[#202020] px-2 py-0.5 font-mono text-[11px] text-[#a3a3a3]">
                     {inspectingSource.lines}
                   </span>
                 </div>
                 <button
                   type="button"
                   onClick={() => setInspectingSource(null)}
-                  className="rounded p-1 text-[#9CA3AF] hover:bg-[#1A2232] hover:text-white cursor-pointer"
+                  className="rounded p-1 text-[#a3a3a3] hover:bg-[#202020] hover:text-white cursor-pointer"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
 
-              <div className="landing-dark-code-scroll overflow-x-auto rounded-[10px] border border-[#243041] bg-[#0B0F16] p-4 font-mono text-[12px] leading-relaxed text-[#E5E7EB]">
+              <div className="landing-dark-code-scroll overflow-x-auto rounded-[10px] border border-[#2a2a2a] bg-[#000000] p-4 font-mono text-[12px] leading-relaxed text-[#e5e5e5]">
                 <pre>{inspectingSource.snippet}</pre>
               </div>
 
@@ -942,23 +942,23 @@ export default function LandingPage({
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 10 }}
-              className="relative w-full max-w-lg rounded-[20px] border border-[#243041] bg-[#111827] p-6 shadow-2xl"
+              className="relative w-full max-w-lg rounded-[20px] border border-[#2a2a2a] bg-[#111111] p-6 shadow-2xl"
             >
-              <div className="mb-4 flex items-center justify-between border-b border-[#243041] pb-3">
+              <div className="mb-4 flex items-center justify-between border-b border-[#2a2a2a] pb-3">
                 <div className="font-inter text-[15px] font-semibold capitalize text-white">
                   {activeNavModal}
                 </div>
                 <button
                   type="button"
                   onClick={() => setActiveNavModal(null)}
-                  className="rounded p-1 text-[#9CA3AF] hover:text-white cursor-pointer"
+                  className="rounded p-1 text-[#a3a3a3] hover:text-white cursor-pointer"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
 
               {activeNavModal === "product" && (
-                <div className="space-y-3 font-inter text-[13.5px] text-[#9CA3AF]">
+                <div className="space-y-3 font-inter text-[13.5px] text-[#a3a3a3]">
                   <p>
                     <strong className="text-white">Arcline</strong>{" "}
                     indexes entire code repositories using AST symbol extraction,
@@ -973,7 +973,7 @@ export default function LandingPage({
               )}
 
               {activeNavModal === "integrations" && (
-                <div className="space-y-3 font-inter text-[13.5px] text-[#9CA3AF]">
+                <div className="space-y-3 font-inter text-[13.5px] text-[#a3a3a3]">
                   <p>
                     Native integrations for{" "}
                     <strong className="text-white">GitHub</strong>,{" "}
@@ -988,7 +988,7 @@ export default function LandingPage({
               )}
 
               {activeNavModal === "docs" && (
-                <div className="space-y-3 font-inter text-[13.5px] text-[#9CA3AF]">
+                <div className="space-y-3 font-inter text-[13.5px] text-[#a3a3a3]">
                   <p>
                     Read our full documentation on Tree-sitter query extraction,
                     hybrid RRF algorithms, and OAuth 2.0 PKCE authentication.
@@ -997,7 +997,7 @@ export default function LandingPage({
               )}
 
               {activeNavModal === "pricing" && (
-                <div className="space-y-3 font-inter text-[13.5px] text-[#9CA3AF]">
+                <div className="space-y-3 font-inter text-[13.5px] text-[#a3a3a3]">
                   <p>
                     <strong className="text-white">Community Edition</strong> is
                     100% free and open-source for personal repositories.

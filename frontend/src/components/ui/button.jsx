@@ -21,9 +21,9 @@ const buttonVariants = cva(
         link: "text-primary underline-offset-4 hover:underline",
         // Design System Variants (Dark Mode Standard)
         brandPrimary:
-          "rounded-[10px] bg-[#EAECEF] text-[#0B0F16] shadow-sm hover:bg-white active:scale-[0.98] border border-transparent font-medium",
+          "rounded-[10px] bg-[#ececec] text-[#000000] shadow-sm hover:bg-white active:scale-[0.98] border border-transparent font-medium",
         brandSecondary:
-          "rounded-[10px] border border-[#243041] bg-[#111622]/90 text-[#E5E7EB] hover:bg-[#1A2232] hover:border-[#374558] active:scale-[0.98] font-medium",
+          "rounded-[10px] border border-[#2a2a2a] bg-[#161616]/90 text-[#e5e5e5] hover:bg-[#202020] hover:border-[#434343] active:scale-[0.98] font-medium",
       },
       size: {
         default: "h-9 px-4 py-2 text-[13.5px]",
@@ -55,7 +55,7 @@ const Button = React.forwardRef(
 Button.displayName = "Button";
 
 /**
- * PrimaryButton — Solid White (#FFFFFF) button with dark Ink (#0B0F16) text,
+ * PrimaryButton — Solid White (#ffffff) button with dark Ink (#000000) text,
  * optional trailing arrow, loading spinner, and full Radix Slot (`asChild`) support.
  */
 const PrimaryButton = React.forwardRef(
@@ -82,7 +82,7 @@ const PrimaryButton = React.forwardRef(
     const renderInner = (labelContent) => (
       <>
         {isLoading ? (
-          <Loader2 className="h-4 w-4 animate-spin text-[#0B0F16]" />
+          <Loader2 className="h-4 w-4 animate-spin text-[#000000]" />
         ) : Icon ? (
           <Icon className="h-4 w-4" />
         ) : null}
@@ -122,7 +122,7 @@ const PrimaryButton = React.forwardRef(
 PrimaryButton.displayName = "PrimaryButton";
 
 /**
- * SecondaryButton — Dark surface button with #243041 border, #E5E7EB typography,
+ * SecondaryButton — Dark surface button with #2a2a2a border, #e5e5e5 typography,
  * optional leading icon, and full Radix Slot (`asChild`) support.
  */
 const SecondaryButton = React.forwardRef(
@@ -148,9 +148,9 @@ const SecondaryButton = React.forwardRef(
     const renderInner = (labelContent) => (
       <>
         {isLoading ? (
-          <Loader2 className="h-4 w-4 animate-spin text-[#E5E7EB]" />
+          <Loader2 className="h-4 w-4 animate-spin text-[#e5e5e5]" />
         ) : Icon ? (
-          <Icon className="h-4 w-4 text-[#E5E7EB]" />
+          <Icon className="h-4 w-4 text-[#e5e5e5]" />
         ) : null}
         <span>{labelContent}</span>
       </>

@@ -66,18 +66,18 @@ export default function IngestModal({
         if (!open && !isIngesting) onClose();
       }}
     >
-      <DialogContent className="sm:max-w-[500px] rounded-[16px] border border-[#243041] bg-[#111827] p-6 text-[#E5E7EB] shadow-2xl font-inter">
+      <DialogContent className="sm:max-w-[500px] rounded-[16px] border border-[#2a2a2a] bg-[#111111] p-6 text-[#e5e5e5] shadow-2xl font-inter">
         <DialogHeader>
           <DialogTitle className="font-inter text-[18px] font-semibold tracking-tight text-white">
             Connect repository
           </DialogTitle>
-          <DialogDescription className="font-inter text-[13px] text-[#9CA3AF]">
+          <DialogDescription className="font-inter text-[13px] text-[#a3a3a3]">
             Index a public GitHub repository or mount your local workspace.
           </DialogDescription>
         </DialogHeader>
 
         {/* Source Switcher Pills */}
-        <div className="mt-2 inline-flex rounded-[8px] border border-[#202838] bg-[#0B0F16] p-1">
+        <div className="mt-2 inline-flex rounded-[8px] border border-[#272727] bg-[#000000] p-1">
           <button
             type="button"
             disabled={isIngesting}
@@ -85,8 +85,8 @@ export default function IngestModal({
             className={cn(
               "flex flex-1 items-center justify-center gap-2 rounded-[6px] px-3 py-1.5 font-inter text-[12.5px] font-medium transition-colors cursor-pointer",
               sourceType === "github"
-                ? "bg-[#1E2636] text-white"
-                : "text-[#9CA3AF] hover:text-white"
+                ? "bg-[#262626] text-white"
+                : "text-[#a3a3a3] hover:text-white"
             )}
           >
             <GitHubIcon className="h-3.5 w-3.5" />
@@ -99,8 +99,8 @@ export default function IngestModal({
             className={cn(
               "flex flex-1 items-center justify-center gap-2 rounded-[6px] px-3 py-1.5 font-inter text-[12.5px] font-medium transition-colors cursor-pointer",
               sourceType === "local"
-                ? "bg-[#1E2636] text-white"
-                : "text-[#9CA3AF] hover:text-white"
+                ? "bg-[#262626] text-white"
+                : "text-[#a3a3a3] hover:text-white"
             )}
           >
             <Laptop className="h-3.5 w-3.5" />
@@ -112,8 +112,8 @@ export default function IngestModal({
           {sourceType === "github" ? (
             <>
               {/* Screenshot-Matched Repo Link Bar */}
-              <div className="flex items-center gap-3 rounded-[8px] border border-[#2A3446] bg-[#0B0F16] px-3.5 py-2.5 transition-colors focus-within:border-[#7DB4FF]/70">
-                <GitHubIcon className="h-5 w-5 shrink-0 text-[#E5E7EB]" />
+              <div className="flex items-center gap-3 rounded-[8px] border border-[#333333] bg-[#000000] px-3.5 py-2.5 transition-colors focus-within:border-[#d4d4d4]/70">
+                <GitHubIcon className="h-5 w-5 shrink-0 text-[#e5e5e5]" />
                 <input
                   id="repo-url-input"
                   type="url"
@@ -123,13 +123,13 @@ export default function IngestModal({
                   disabled={isIngesting}
                   required={sourceType === "github"}
                   autoFocus
-                  className="w-full bg-transparent font-inter text-[13.5px] text-[#E5E7EB] placeholder:text-[#6B7280] focus:outline-none"
+                  className="w-full bg-transparent font-inter text-[13.5px] text-[#e5e5e5] placeholder:text-[#858585] focus:outline-none"
                 />
                 <button
                   type="submit"
                   disabled={isIngesting || !repoUrl.trim()}
                   aria-label="Connect repository"
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#E5E7EB] text-[#0B0F16] transition-all hover:bg-white disabled:opacity-40 cursor-pointer"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#e5e5e5] text-[#000000] transition-all hover:bg-white disabled:opacity-40 cursor-pointer"
                 >
                   {isIngesting ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -139,8 +139,8 @@ export default function IngestModal({
                 </button>
               </div>
 
-              <div className="flex items-center gap-2.5 rounded-[8px] border border-[#1E2636] bg-[#0B0F16]/60 px-3 py-2">
-                <GitBranch className="h-3.5 w-3.5 shrink-0 text-[#6B7280]" />
+              <div className="flex items-center gap-2.5 rounded-[8px] border border-[#262626] bg-[#000000]/60 px-3 py-2">
+                <GitBranch className="h-3.5 w-3.5 shrink-0 text-[#858585]" />
                 <input
                   id="repo-branch-input"
                   type="text"
@@ -148,21 +148,21 @@ export default function IngestModal({
                   value={branch}
                   onChange={(e) => setBranch(e.target.value)}
                   disabled={isIngesting}
-                  className="w-full bg-transparent font-mono text-[12px] text-[#D1D5DB] placeholder:text-[#6B7280] focus:outline-none"
+                  className="w-full bg-transparent font-mono text-[12px] text-[#d4d4d4] placeholder:text-[#858585] focus:outline-none"
                 />
               </div>
             </>
           ) : (
-            <div className="flex items-center justify-between gap-3 rounded-[10px] border border-[#243041] bg-[#0B0F16] p-3.5">
+            <div className="flex items-center justify-between gap-3 rounded-[10px] border border-[#2a2a2a] bg-[#000000] p-3.5">
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#243041] bg-[#151C28] text-[#7DB4FF]">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#2a2a2a] bg-[#1b1b1b] text-[#d4d4d4]">
                   <Laptop className="h-4 w-4" />
                 </div>
                 <div>
                   <div className="font-inter text-[13px] font-medium text-white">
                     Mount Local Workspace
                   </div>
-                  <div className="font-inter text-[11.5px] text-[#9CA3AF]">
+                  <div className="font-inter text-[11.5px] text-[#a3a3a3]">
                     Indexes the local directory with SHA-256 incremental sync
                   </div>
                 </div>
@@ -171,7 +171,7 @@ export default function IngestModal({
               <button
                 type="submit"
                 disabled={isIngesting}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#E5E7EB] text-[#0B0F16] transition-all hover:bg-white disabled:opacity-40 cursor-pointer"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#e5e5e5] text-[#000000] transition-all hover:bg-white disabled:opacity-40 cursor-pointer"
               >
                 {isIngesting ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -183,14 +183,14 @@ export default function IngestModal({
           )}
 
           {/* Deep Summaries Toggle */}
-          <div className="flex items-center justify-between gap-3 rounded-[10px] border border-[#1E2636] bg-[#0E131D] px-3.5 py-2.5">
+          <div className="flex items-center justify-between gap-3 rounded-[10px] border border-[#262626] bg-[#131313] px-3.5 py-2.5">
             <div className="flex items-center gap-2.5">
-              <FileText className="h-4 w-4 shrink-0 text-[#7DB4FF]" />
+              <FileText className="h-4 w-4 shrink-0 text-[#d4d4d4]" />
               <div>
-                <div className="font-inter text-[12.5px] font-medium text-[#E5E7EB]">
+                <div className="font-inter text-[12.5px] font-medium text-[#e5e5e5]">
                   Deep file summaries
                 </div>
-                <div className="font-inter text-[11px] text-[#9CA3AF]">
+                <div className="font-inter text-[11px] text-[#a3a3a3]">
                   Generate LLM architectural overviews during indexing
                 </div>
               </div>

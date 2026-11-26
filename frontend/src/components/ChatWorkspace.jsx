@@ -209,9 +209,9 @@ export default function ChatWorkspace({
 
   return (
     <TooltipProvider delayDuration={180}>
-      <main className="landing-dark-canvas relative flex h-screen min-w-0 flex-1 flex-col bg-[#0B0F16] text-[#E5E7EB]">
+      <main className="landing-dark-canvas relative flex h-screen min-w-0 flex-1 flex-col bg-[#000000] text-[#e5e5e5]">
         {/* Minimal Top Header Bar */}
-        <header className="z-10 flex h-12 shrink-0 items-center justify-between gap-4 border-b border-[#1E2636] bg-[#0B0F16]/85 px-5 backdrop-blur-md">
+        <header className="z-10 flex h-12 shrink-0 items-center justify-between gap-4 border-b border-[#262626] bg-[#000000]/85 px-5 backdrop-blur-md">
           <div className="flex min-w-0 items-center gap-2.5">
             {isSidebarCollapsed && (
               <Tooltip>
@@ -220,7 +220,7 @@ export default function ChatWorkspace({
                     type="button"
                     onClick={onExpandSidebar}
                     aria-label="Expand sidebar"
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-[#9CA3AF] transition-colors hover:bg-[#1A2232] hover:text-white cursor-pointer"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-[#a3a3a3] transition-colors hover:bg-[#202020] hover:text-white cursor-pointer"
                   >
                     <PanelLeftOpen className="h-4 w-4" />
                   </button>
@@ -232,24 +232,24 @@ export default function ChatWorkspace({
             {activeRepo ? (
               <div className="flex min-w-0 items-center gap-2 font-inter text-[13px]">
                 {isLocalRepo(activeRepo.repo_url) ? (
-                  <Laptop className="h-3.5 w-3.5 shrink-0 text-[#7DB4FF]" />
+                  <Laptop className="h-3.5 w-3.5 shrink-0 text-[#d4d4d4]" />
                 ) : (
-                  <GitHubIcon className="h-3.5 w-3.5 shrink-0 text-[#9CA3AF]" />
+                  <GitHubIcon className="h-3.5 w-3.5 shrink-0 text-[#a3a3a3]" />
                 )}
-                <span className="truncate font-medium text-[#F3F4F6]">
+                <span className="truncate font-medium text-[#f5f5f5]">
                   {formatRepoName(activeRepo.repo_url)}
                 </span>
-                <span className="inline-flex items-center gap-1 rounded-[5px] border border-[#243041] bg-[#141A26] px-1.5 py-0.5 font-mono text-[10.5px] text-[#9CA3AF]">
-                  <GitBranch className="h-2.5 w-2.5 text-[#7DB4FF]" />
+                <span className="inline-flex items-center gap-1 rounded-[5px] border border-[#2a2a2a] bg-[#1a1a1a] px-1.5 py-0.5 font-mono text-[10.5px] text-[#a3a3a3]">
+                  <GitBranch className="h-2.5 w-2.5 text-[#d4d4d4]" />
                   <span>{activeRepo.branch || "main"}</span>
                 </span>
-                <span className="hidden text-[#374151] sm:inline">/</span>
-                <span className="hidden truncate text-[#9CA3AF] sm:inline">
+                <span className="hidden text-[#404040] sm:inline">/</span>
+                <span className="hidden truncate text-[#a3a3a3] sm:inline">
                   {activeTitle}
                 </span>
               </div>
             ) : (
-              <span className="font-inter text-[13px] font-medium text-[#9CA3AF]">
+              <span className="font-inter text-[13px] font-medium text-[#a3a3a3]">
                 Workspace
               </span>
             )}
@@ -262,12 +262,12 @@ export default function ChatWorkspace({
                 onClick={onReindexRepo}
                 disabled={isReindexing}
                 title="Sync incremental file changes"
-                className="inline-flex items-center gap-1.5 rounded-[7px] border border-[#243041] bg-[#131822] px-2.5 py-1 font-inter text-[12px] font-medium text-[#D1D5DB] transition-colors hover:border-[#2E3B52] hover:bg-[#1A2232] hover:text-white disabled:opacity-50 cursor-pointer"
+                className="inline-flex items-center gap-1.5 rounded-[7px] border border-[#2a2a2a] bg-[#141414] px-2.5 py-1 font-inter text-[12px] font-medium text-[#d4d4d4] transition-colors hover:border-[#3a3a3a] hover:bg-[#202020] hover:text-white disabled:opacity-50 cursor-pointer"
               >
                 <RefreshCw
                   className={cn(
                     "h-3 w-3",
-                    isReindexing && "animate-spin text-[#7DB4FF]"
+                    isReindexing && "animate-spin text-[#d4d4d4]"
                   )}
                 />
                 <span>{isReindexing ? "Syncing..." : "Sync"}</span>
@@ -277,7 +277,7 @@ export default function ChatWorkspace({
                 type="button"
                 onClick={onNewChat}
                 disabled={isSending || isCreatingChat}
-                className="inline-flex items-center gap-1.5 rounded-[7px] border border-[#263246] bg-[#172030] px-2.5 py-1 font-inter text-[12px] font-medium text-white transition-colors hover:bg-[#1E2A3F] disabled:opacity-50 cursor-pointer"
+                className="inline-flex items-center gap-1.5 rounded-[7px] border border-[#313131] bg-[#1f1f1f] px-2.5 py-1 font-inter text-[12px] font-medium text-white transition-colors hover:bg-[#292929] disabled:opacity-50 cursor-pointer"
               >
                 <Plus className="h-3.5 w-3.5" />
                 <span>New chat</span>
@@ -294,7 +294,7 @@ export default function ChatWorkspace({
               <strong className="font-inter text-[12px] font-semibold text-white">
                 Environment Configuration Required
               </strong>
-              <ul className="mt-1 list-disc pl-4 text-[#D1D5DB]">
+              <ul className="mt-1 list-disc pl-4 text-[#d4d4d4]">
                 {health.issues.map((issue, idx) => (
                   <li key={idx}>{issue}</li>
                 ))}
@@ -321,11 +321,11 @@ export default function ChatWorkspace({
                 <div className="mb-6 text-center">
                   <h2 className="font-inter text-[28px] font-medium tracking-[-0.025em] text-white sm:text-[34px]">
                     Connect your{" "}
-                    <span className="font-fraunces italic font-normal text-[#7DB4FF]">
+                    <span className="font-fraunces italic font-normal text-[#d4d4d4]">
                       repository
                     </span>
                   </h2>
-                  <p className="mx-auto mt-2 max-w-[440px] font-inter text-[14px] leading-relaxed text-[#9CA3AF]">
+                  <p className="mx-auto mt-2 max-w-[440px] font-inter text-[14px] leading-relaxed text-[#a3a3a3]">
                     Paste a GitHub repository link below to index AST symbols,
                     trace call graphs, and query your codebase.
                   </p>
@@ -333,8 +333,8 @@ export default function ChatWorkspace({
 
                 {/* Screenshot-matched Repo Link Input Bar */}
                 <form onSubmit={handleInlineRepoSubmit} className="w-full">
-                  <div className="flex items-center gap-3.5 rounded-[8px] border border-[#2A3446] bg-[#10141D] px-4 py-2.5 shadow-[0_12px_36px_rgba(0,0,0,0.5)] transition-colors focus-within:border-[#7DB4FF]/70">
-                    <GitHubIcon className="h-5 w-5 shrink-0 text-[#E5E7EB]" />
+                  <div className="flex items-center gap-3.5 rounded-[8px] border border-[#333333] bg-[#111111] px-4 py-2.5 shadow-[0_12px_36px_rgba(0,0,0,0.5)] transition-colors focus-within:border-[#d4d4d4]/70">
+                    <GitHubIcon className="h-5 w-5 shrink-0 text-[#e5e5e5]" />
                     <input
                       type="url"
                       placeholder="Enter a repo link"
@@ -342,13 +342,13 @@ export default function ChatWorkspace({
                       onChange={(e) => setInlineRepoUrl(e.target.value)}
                       disabled={isIngesting}
                       required
-                      className="w-full bg-transparent font-inter text-[14px] text-[#E5E7EB] placeholder:text-[#6B7280] focus:outline-none"
+                      className="w-full bg-transparent font-inter text-[14px] text-[#e5e5e5] placeholder:text-[#858585] focus:outline-none"
                     />
                     <button
                       type="submit"
                       disabled={isIngesting || !inlineRepoUrl.trim()}
                       aria-label="Connect repository"
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#E5E7EB] text-[#0B0F16] transition-all hover:bg-white disabled:opacity-40 cursor-pointer"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#e5e5e5] text-[#000000] transition-all hover:bg-white disabled:opacity-40 cursor-pointer"
                     >
                       {isIngesting ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -359,16 +359,16 @@ export default function ChatWorkspace({
                   </div>
 
                   {/* Secondary inline options: Optional branch + Mount local workspace */}
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 px-1 text-[12px] text-[#9CA3AF]">
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 px-1 text-[12px] text-[#a3a3a3]">
                     <div className="flex items-center gap-2">
-                      <GitBranch className="h-3.5 w-3.5 text-[#6B7280]" />
+                      <GitBranch className="h-3.5 w-3.5 text-[#858585]" />
                       <input
                         type="text"
                         placeholder="Branch (default: main)"
                         value={inlineBranch}
                         onChange={(e) => setInlineBranch(e.target.value)}
                         disabled={isIngesting}
-                        className="w-40 rounded-[6px] border border-transparent bg-transparent px-1.5 py-0.5 font-mono text-[11.5px] text-[#D1D5DB] placeholder:text-[#6B7280] focus:border-[#243041] focus:bg-[#131822] focus:outline-none"
+                        className="w-40 rounded-[6px] border border-transparent bg-transparent px-1.5 py-0.5 font-mono text-[11.5px] text-[#d4d4d4] placeholder:text-[#858585] focus:border-[#2a2a2a] focus:bg-[#141414] focus:outline-none"
                       />
                     </div>
 
@@ -376,7 +376,7 @@ export default function ChatWorkspace({
                       type="button"
                       onClick={handleMountLocalWorkspace}
                       disabled={isIngesting}
-                      className="inline-flex items-center gap-1.5 font-inter text-[12px] text-[#9CA3AF] transition-colors hover:text-[#7DB4FF] disabled:opacity-40 cursor-pointer"
+                      className="inline-flex items-center gap-1.5 font-inter text-[12px] text-[#a3a3a3] transition-colors hover:text-[#d4d4d4] disabled:opacity-40 cursor-pointer"
                     >
                       <Laptop className="h-3.5 w-3.5" />
                       <span>Mount local workspace</span>
@@ -385,8 +385,8 @@ export default function ChatWorkspace({
                 </form>
 
                 {isIngesting && (
-                  <div className="mt-4 flex items-center justify-center gap-2.5 rounded-[8px] border border-[#243041] bg-[#131822]/90 px-4 py-2.5 font-inter text-[12.5px] text-[#D1D5DB]">
-                    <Loader2 className="h-4 w-4 animate-spin text-[#7DB4FF]" />
+                  <div className="mt-4 flex items-center justify-center gap-2.5 rounded-[8px] border border-[#2a2a2a] bg-[#141414]/90 px-4 py-2.5 font-inter text-[12.5px] text-[#d4d4d4]">
+                    <Loader2 className="h-4 w-4 animate-spin text-[#d4d4d4]" />
                     <span>
                       Indexing repository AST symbols & vector embeddings...
                     </span>
@@ -401,8 +401,8 @@ export default function ChatWorkspace({
                 )}
               </motion.div>
             ) : loadingConversation ? (
-              <div className="m-auto flex items-center gap-2.5 font-inter text-[13px] text-[#9CA3AF]">
-                <Loader2 className="h-4 w-4 animate-spin text-[#7DB4FF]" />
+              <div className="m-auto flex items-center gap-2.5 font-inter text-[13px] text-[#a3a3a3]">
+                <Loader2 className="h-4 w-4 animate-spin text-[#d4d4d4]" />
                 <span>Loading conversation...</span>
               </div>
             ) : messages.length === 0 ? (
@@ -415,11 +415,11 @@ export default function ChatWorkspace({
                 >
                   <h2 className="font-inter text-[26px] font-medium tracking-[-0.025em] text-white sm:text-[32px]">
                     Ask anything about{" "}
-                    <span className="font-fraunces italic font-normal text-[#7DB4FF]">
+                    <span className="font-fraunces italic font-normal text-[#d4d4d4]">
                       {formatRepoName(activeRepo.repo_url)}
                     </span>
                   </h2>
-                  <p className="mx-auto mt-2 max-w-[460px] font-inter text-[13.5px] leading-relaxed text-[#9CA3AF]">
+                  <p className="mx-auto mt-2 max-w-[460px] font-inter text-[13.5px] leading-relaxed text-[#a3a3a3]">
                     Trace execution paths, symbol definitions, and module
                     boundaries with line-accurate file citations.
                   </p>
@@ -441,15 +441,15 @@ export default function ChatWorkspace({
                         }}
                         onClick={() => !isSending && onSendMessage(item.prompt)}
                         disabled={isSending}
-                        className="group flex flex-col justify-between rounded-[10px] border border-[#1E2636] bg-[#111621]/90 p-4 text-left transition-all hover:border-[#2E3B52] hover:bg-[#161D2B] cursor-pointer"
+                        className="group flex flex-col justify-between rounded-[10px] border border-[#262626] bg-[#161616]/90 p-4 text-left transition-all hover:border-[#3a3a3a] hover:bg-[#1d1d1d] cursor-pointer"
                       >
                         <div className="mb-2.5 flex items-center justify-between">
-                          <span className="font-inter text-[13px] font-semibold text-[#F3F4F6] group-hover:text-white">
+                          <span className="font-inter text-[13px] font-semibold text-[#f5f5f5] group-hover:text-white">
                             {item.title}
                           </span>
-                          <IconComponent className="h-4 w-4 text-[#6B7280] transition-colors group-hover:text-[#7DB4FF]" />
+                          <IconComponent className="h-4 w-4 text-[#858585] transition-colors group-hover:text-[#d4d4d4]" />
                         </div>
-                        <p className="font-inter text-[12px] leading-relaxed text-[#9CA3AF]">
+                        <p className="font-inter text-[12px] leading-relaxed text-[#a3a3a3]">
                           {item.desc}
                         </p>
                       </motion.button>
@@ -465,16 +465,16 @@ export default function ChatWorkspace({
                       type="button"
                       onClick={handleLoadOlderClick}
                       disabled={loadingOlderMessages}
-                      className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#243041] bg-[#131822] px-3 py-1.5 font-inter text-[12px] text-[#9CA3AF] transition-colors hover:bg-[#1A2232] hover:text-white cursor-pointer"
+                      className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#2a2a2a] bg-[#141414] px-3 py-1.5 font-inter text-[12px] text-[#a3a3a3] transition-colors hover:bg-[#202020] hover:text-white cursor-pointer"
                     >
                       {loadingOlderMessages ? (
                         <>
-                          <Loader2 className="h-3.5 w-3.5 animate-spin text-[#7DB4FF]" />
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-[#d4d4d4]" />
                           <span>Loading earlier messages...</span>
                         </>
                       ) : (
                         <>
-                          <History className="h-3.5 w-3.5 text-[#7DB4FF]" />
+                          <History className="h-3.5 w-3.5 text-[#d4d4d4]" />
                           <span>Load earlier messages</span>
                         </>
                       )}
@@ -495,25 +495,25 @@ export default function ChatWorkspace({
           <button
             type="button"
             onClick={() => scrollToBottom("smooth")}
-            className="absolute bottom-24 left-1/2 z-20 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border border-[#243041] bg-[#131822] text-[#E5E7EB] shadow-lg transition-colors hover:bg-[#1A2232] cursor-pointer"
+            className="absolute bottom-24 left-1/2 z-20 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border border-[#2a2a2a] bg-[#141414] text-[#e5e5e5] shadow-lg transition-colors hover:bg-[#202020] cursor-pointer"
             title="Scroll to latest message"
             aria-label="Scroll to latest message"
           >
-            <ArrowDown className="h-4 w-4 text-[#7DB4FF]" />
+            <ArrowDown className="h-4 w-4 text-[#d4d4d4]" />
           </button>
         )}
 
         {/* Bottom Chat Input Bar — Matching the Screenshot UI */}
         {activeRepo && (
-          <div className="shrink-0 bg-gradient-to-t from-[#0B0F16] via-[#0B0F16]/95 to-transparent px-5 pt-2 pb-5">
+          <div className="shrink-0 bg-gradient-to-t from-[#000000] via-[#000000]/95 to-transparent px-5 pt-2 pb-5">
             <form
               onSubmit={handleSubmit}
-              className="mx-auto flex w-full max-w-[780px] items-center gap-3.5 rounded-[8px] border border-[#2A3446] bg-[#10141D] px-4 py-2.5 shadow-[0_12px_36px_rgba(0,0,0,0.5)] transition-colors focus-within:border-[#7DB4FF]/70"
+              className="mx-auto flex w-full max-w-[780px] items-center gap-3.5 rounded-[8px] border border-[#333333] bg-[#111111] px-4 py-2.5 shadow-[0_12px_36px_rgba(0,0,0,0.5)] transition-colors focus-within:border-[#d4d4d4]/70"
             >
               {isLocalRepo(activeRepo.repo_url) ? (
-                <Laptop className="h-5 w-5 shrink-0 text-[#9CA3AF]" />
+                <Laptop className="h-5 w-5 shrink-0 text-[#a3a3a3]" />
               ) : (
-                <GitHubIcon className="h-5 w-5 shrink-0 text-[#E5E7EB]" />
+                <GitHubIcon className="h-5 w-5 shrink-0 text-[#e5e5e5]" />
               )}
 
               <textarea
@@ -524,7 +524,7 @@ export default function ChatWorkspace({
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 disabled={isSending}
-                className="max-h-[140px] min-h-[24px] flex-1 resize-none bg-transparent font-inter text-[14px] leading-6 text-[#E5E7EB] placeholder:text-[#6B7280] focus:outline-none landing-dark-code-scroll"
+                className="max-h-[140px] min-h-[24px] flex-1 resize-none bg-transparent font-inter text-[14px] leading-6 text-[#e5e5e5] placeholder:text-[#858585] focus:outline-none landing-dark-code-scroll"
               />
 
               <button
@@ -532,7 +532,7 @@ export default function ChatWorkspace({
                 disabled={!input.trim() || isSending}
                 title="Send message"
                 aria-label="Send message"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#E5E7EB] text-[#0B0F16] transition-all hover:bg-white disabled:opacity-35 cursor-pointer"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#e5e5e5] text-[#000000] transition-all hover:bg-white disabled:opacity-35 cursor-pointer"
               >
                 {isSending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
