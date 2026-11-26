@@ -7,6 +7,7 @@ import {
   GitBranch,
   ArrowRight,
   ArrowDown,
+  Send,
   Compass,
   Layers,
   Workflow,
@@ -25,6 +26,8 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import MessageItem from "./MessageItem";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { formatRepoName } from "../api";
 
 function GitHubIcon({ className = "h-5 w-5" }) {
@@ -108,6 +111,7 @@ export default function ChatWorkspace({
   const messagesContainerRef = useRef(null);
   const textareaRef = useRef(null);
   const prevScrollHeightRef = useRef(null);
+  const followLatestRef = useRef(true);
 
   const isLocalRepo = (url) => {
     const str = String(url || "").toLowerCase();
@@ -128,6 +132,10 @@ export default function ChatWorkspace({
   }, []);
 
   useEffect(() => {
+    followLatestRef.current = true;
+  }, [activeConversation?.id]);
+
+  useEffect(() => {
     const el = messagesContainerRef.current;
     if (!el) return;
     if (prevScrollHeightRef.current !== null) {
@@ -136,7 +144,7 @@ export default function ChatWorkspace({
       prevScrollHeightRef.current = null;
       return;
     }
-    scrollToBottom("auto");
+    if (followLatestRef.current) scrollToBottom("auto");
   }, [messages, activeConversation?.id, scrollToBottom]);
 
   useEffect(() => {
@@ -151,6 +159,7 @@ export default function ChatWorkspace({
     if (!el) return;
 
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    followLatestRef.current = distanceFromBottom < 100;
     setShowScrollBottom(distanceFromBottom > 220);
 
     if (el.scrollTop <= 12 && hasMoreMessages && !loadingOlderMessages) {
@@ -171,6 +180,7 @@ export default function ChatWorkspace({
     e.preventDefault();
     const trimmed = input.trim();
     if (!trimmed || isSending || !activeRepo) return;
+    followLatestRef.current = true;
     setInput("");
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -179,7 +189,7 @@ export default function ChatWorkspace({
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSubmit(e);
     }
@@ -211,7 +221,7 @@ export default function ChatWorkspace({
     <TooltipProvider delayDuration={180}>
       <main className="landing-dark-canvas relative flex h-screen min-w-0 flex-1 flex-col bg-[#000000] text-[#e5e5e5]">
         {/* Minimal Top Header Bar */}
-        <header className="z-10 flex h-12 shrink-0 items-center justify-between gap-4 border-b border-[#262626] bg-[#000000]/85 px-5 backdrop-blur-md">
+        <header className="z-10 flex h-12 shrink-0 items-center justify-between gap-4 border-b border-border/70 bg-background px-5">
           <div className="flex min-w-0 items-center gap-2.5">
             {isSidebarCollapsed && (
               <Tooltip>
@@ -458,7 +468,7 @@ export default function ChatWorkspace({
                 </div>
               </div>
             ) : (
-              <div className="flex flex-col gap-5 pb-4">
+              <div className="flex flex-col gap-8 pb-8">
                 {hasMoreMessages && (
                   <div className="flex justify-center">
                     <button
@@ -494,7 +504,10 @@ export default function ChatWorkspace({
         {showScrollBottom && messages.length > 0 && (
           <button
             type="button"
-            onClick={() => scrollToBottom("smooth")}
+            onClick={() => {
+              followLatestRef.current = true;
+              scrollToBottom("smooth");
+            }}
             className="absolute bottom-24 left-1/2 z-20 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border border-[#2a2a2a] bg-[#141414] text-[#e5e5e5] shadow-lg transition-colors hover:bg-[#202020] cursor-pointer"
             title="Scroll to latest message"
             aria-label="Scroll to latest message"
@@ -508,7 +521,7 @@ export default function ChatWorkspace({
           <div className="shrink-0 bg-gradient-to-t from-[#000000] via-[#000000]/95 to-transparent px-5 pt-2 pb-5">
             <form
               onSubmit={handleSubmit}
-              className="mx-auto flex w-full max-w-[780px] items-center gap-3.5 rounded-[8px] border border-[#333333] bg-[#111111] px-4 py-2.5 shadow-[0_12px_36px_rgba(0,0,0,0.5)] transition-colors focus-within:border-[#d4d4d4]/70"
+              className="mx-auto flex w-full max-w-[780px] items-end gap-3 rounded-2xl border border-border bg-card px-4 py-3 transition-colors focus-within:border-neutral-500"
             >
               {isLocalRepo(activeRepo.repo_url) ? (
                 <Laptop className="h-5 w-5 shrink-0 text-[#a3a3a3]" />
@@ -516,30 +529,32 @@ export default function ChatWorkspace({
                 <GitHubIcon className="h-5 w-5 shrink-0 text-[#e5e5e5]" />
               )}
 
-              <textarea
+              <Textarea
                 ref={textareaRef}
                 rows={1}
+                aria-label="Ask a question about this repository"
                 placeholder={`Ask ${formatRepoName(activeRepo.repo_url)} a question...`}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 disabled={isSending}
-                className="max-h-[140px] min-h-[24px] flex-1 resize-none bg-transparent font-inter text-[14px] leading-6 text-[#e5e5e5] placeholder:text-[#858585] focus:outline-none landing-dark-code-scroll"
+                className="max-h-[140px] min-h-8 flex-1 resize-none rounded-none border-0 bg-transparent px-0 py-1 font-inter text-base leading-6 shadow-none placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:outline-none landing-dark-code-scroll"
               />
 
-              <button
+              <Button
                 type="submit"
+                size="icon"
                 disabled={!input.trim() || isSending}
                 title="Send message"
                 aria-label="Send message"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#e5e5e5] text-[#000000] transition-all hover:bg-white disabled:opacity-35 cursor-pointer"
+                className="h-8 w-8 shrink-0 rounded-lg bg-primary text-primary-foreground hover:bg-white disabled:opacity-35"
               >
                 {isSending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <ArrowRight className="h-4 w-4 stroke-[2]" />
+                  <Send className="h-4 w-4" />
                 )}
-              </button>
+              </Button>
             </form>
           </div>
         )}

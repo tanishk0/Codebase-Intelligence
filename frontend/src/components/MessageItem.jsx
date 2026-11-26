@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useId } from "react";
 import { motion } from "motion/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -7,9 +7,9 @@ import {
   Check,
   FileText,
   ChevronDown,
-  ArrowUpRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
 const FILE_REF_REGEX = /^\[?[a-zA-Z0-9_./-]+:L\d+(?:-L?\d+)?\]?$/;
 const GLOBAL_FILE_REF_REGEX = /`?\[?([a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+):L(\d+(?:-L?\d+)?)\]?`?/g;
@@ -73,7 +73,9 @@ function CodeBlock({ inline, className, children, ...props }) {
     <div className="my-3.5 overflow-hidden rounded-[10px] border border-[#2a2a2a] bg-[#000000] text-[#e5e5e5]">
       <div className="flex items-center justify-between border-b border-[#262626] bg-[#171717] px-3.5 py-1.5 font-mono text-[11px] text-[#a3a3a3]">
         <span className="lowercase">{language}</span>
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
           type="button"
           onClick={handleCopy}
           className="inline-flex items-center gap-1.5 rounded px-2 py-0.5 font-inter text-[11px] text-[#a3a3a3] transition-colors hover:bg-[#202020] hover:text-white cursor-pointer"
@@ -89,7 +91,7 @@ function CodeBlock({ inline, className, children, ...props }) {
               <span>Copy</span>
             </>
           )}
-        </button>
+        </Button>
       </div>
       <pre className="landing-dark-code-scroll overflow-x-auto p-3.5 font-mono text-[12.5px] leading-relaxed text-[#e5e5e5]">
         <code className={className} {...props}>
@@ -102,7 +104,8 @@ function CodeBlock({ inline, className, children, ...props }) {
 
 export default function MessageItem({ message }) {
   const [copiedMessage, setCopiedMessage] = useState(false);
-  const [sourcesOpen, setSourcesOpen] = useState(true);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+  const sourcesId = useId();
   const isUser = message.role === "user";
   const isStreaming = Boolean(message.streaming);
   const statusStage = message.statusStage || "";
@@ -141,27 +144,29 @@ export default function MessageItem({ message }) {
 
   if (isUser) {
     return (
-      <motion.div
+      <motion.article
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
         className="flex justify-end"
       >
-        <div className="max-w-[78%] rounded-[10px] border border-[#343434]/80 bg-[#292929] px-4 py-2.5 font-inter text-[13.5px] leading-relaxed text-[#e5e5e5]">
+        <div className="max-w-[88%] rounded-2xl bg-secondary px-4 py-3 font-inter text-[15px] leading-relaxed text-foreground sm:max-w-[78%]">
           <div className="whitespace-pre-wrap break-words">
             {message.content}
           </div>
         </div>
-      </motion.div>
+      </motion.article>
     );
   }
 
   return (
-    <motion.div
+    <motion.article
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
-      className="group relative rounded-[12px] border border-[#252525] bg-[#111111]/90 p-4 sm:p-5"
+      className="group relative min-w-0 py-3"
+      aria-label="Arcline response"
+      aria-busy={isStreaming}
     >
       <div className="flex items-start gap-3">
         <div className="mt-1 flex h-4 w-4 shrink-0 items-center justify-center">
@@ -169,31 +174,8 @@ export default function MessageItem({ message }) {
         </div>
 
         <div className="min-w-0 flex-1">
-          {!isStreaming && message.content && (
-            <div className="float-right ml-3 mb-1">
-              <button
-                type="button"
-                onClick={handleCopyMessage}
-                className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 font-inter text-[11px] text-[#858585] opacity-0 group-hover:opacity-100 transition-all hover:bg-[#202020] hover:text-[#e5e5e5] cursor-pointer"
-                title="Copy response"
-              >
-                {copiedMessage ? (
-                  <>
-                    <Check className="h-3 w-3 text-emerald-400" />
-                    <span>Copied</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="h-3 w-3" />
-                    <span>Copy</span>
-                  </>
-                )}
-              </button>
-            </div>
-          )}
-
           {isStreaming && !message.content ? (
-            <div className="flex items-center gap-3 py-1 font-inter text-[13px] text-[#a3a3a3]">
+            <div role="status" className="flex min-h-7 items-center gap-3 font-inter text-sm text-muted-foreground">
               <div className="thinking-dots">
                 <span />
                 <span />
@@ -207,6 +189,7 @@ export default function MessageItem({ message }) {
                 remarkPlugins={[remarkGfm]}
                 components={{
                   code: CodeBlock,
+                  pre: ({ children }) => <>{children}</>,
                 }}
               >
                 {message.content || ""}
@@ -215,25 +198,43 @@ export default function MessageItem({ message }) {
             </div>
           )}
 
-          {/* Extracted Sources Disclosure (matching Landing Page preview) */}
-          {extractedSources.length > 0 && (
-            <div className="mt-4 border-t border-[#222222] pt-3">
-              <button
+          {!isStreaming && message.content && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={handleCopyMessage}
+              className="mt-3 h-8 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+              aria-label={copiedMessage ? "Response copied" : "Copy response"}
+            >
+              {copiedMessage ? <Check /> : <Copy />}
+              {copiedMessage ? "Copied" : "Copy response"}
+            </Button>
+          )}
+
+          {/* Sources appear once the response is complete. */}
+          {!isStreaming && extractedSources.length > 0 && (
+            <div className="mt-3 border-t border-border/60 pt-3">
+              <Button
+                variant="ghost"
+                size="sm"
                 type="button"
                 onClick={() => setSourcesOpen((prev) => !prev)}
-                className="flex items-center gap-1.5 font-inter text-[11.5px] font-medium text-[#a3a3a3] transition-colors hover:text-white cursor-pointer"
+                aria-expanded={sourcesOpen}
+                aria-controls={sourcesId}
+                className="h-8 gap-1.5 px-2 font-inter text-xs font-medium text-muted-foreground hover:text-foreground"
               >
-                <span>• Sources ({extractedSources.length})</span>
+                <span>Sources ({extractedSources.length})</span>
                 <ChevronDown
                   className={cn(
                     "h-3 w-3 transition-transform",
                     sourcesOpen && "rotate-180"
                   )}
                 />
-              </button>
+              </Button>
 
               {sourcesOpen && (
-                <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                <div id={sourcesId} className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                   {extractedSources.map((src) => (
                     <div
                       key={`${src.path}:${src.lines}`}
@@ -249,7 +250,6 @@ export default function MessageItem({ message }) {
                         <span className="rounded-[4px] bg-[#262626] px-1.5 py-0.5 font-mono text-[10.5px] text-[#a3a3a3]">
                           {src.lines}
                         </span>
-                        <ArrowUpRight className="h-3.5 w-3.5 text-[#858585]" />
                       </div>
                     </div>
                   ))}
@@ -259,6 +259,6 @@ export default function MessageItem({ message }) {
           )}
         </div>
       </div>
-    </motion.div>
+    </motion.article>
   );
 }

@@ -121,6 +121,8 @@ export default function Sidebar({
   return (
     <TooltipProvider delayDuration={180}>
       <aside
+        aria-hidden={isCollapsed}
+        inert={isCollapsed ? true : undefined}
         className={cn(
           "flex h-screen flex-col border-r border-[#262626] bg-[#0a0a0a] transition-all duration-300 select-none shrink-0 font-inter",
           isCollapsed
