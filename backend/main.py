@@ -34,7 +34,7 @@ _SYNC_LOCKS: dict[str, asyncio.Lock] = {}
 _WORKER_ID = f"worker-{uuid.uuid4().hex[:8]}"
 
 
-def _execute_ingest(raw_url: str, branch: str | None = None, llm_summaries: bool = False) -> dict[str, Any]:
+def _execute_ingest(raw_url: str, branch: str | None = None, llm_summaries: bool = False, owner_id: str | None = None) -> dict[str, Any]:
     """Loads files with SHA-256 hashes, chunks ASTs, and runs full or incremental indexing."""
     store = SupabaseVectorStore()
     embedder = NvidiaEmbedder()
@@ -70,6 +70,7 @@ def _execute_ingest(raw_url: str, branch: str | None = None, llm_summaries: bool
         include_summaries=True,
         summarizer=summarizer,
         llm_summaries=llm_summaries,
+        owner_id=owner_id,
     )
     repo_meta = store.get_repository(repo_id) or {}
     return {
@@ -104,7 +105,10 @@ async def _run_job_record(job: dict[str, Any], job_store: IndexJobStore) -> None
     heartbeat_task = asyncio.create_task(_heartbeat_loop(job_store, job_id))
     try:
         async with lock:
-            stats = await asyncio.to_thread(_execute_ingest, repo_url, branch, llm_summaries)
+            repo = await asyncio.to_thread(SupabaseVectorStore().get_repository, str(job.get("repo_id") or ""))
+            if not repo:
+                raise ValueError("Repository no longer exists.")
+            stats = await asyncio.to_thread(_execute_ingest, repo_url, branch, llm_summaries, repo.get("owner_id"))
         await asyncio.to_thread(job_store.succeed, job_id, stats=stats)
     except Exception as exc:
         try:
@@ -155,28 +159,18 @@ async def _background_local_sync_loop() -> None:
         try:
             store = SupabaseVectorStore()
             repos = await asyncio.to_thread(store.list_repositories)
-            local_repo = next((r for r in repos if r.get("repo_url") == LOCAL_REPO_URL), None)
-            if not local_repo:
-                continue
-
-            repo_id = str(local_repo["id"])
-            full_meta = await asyncio.to_thread(store.get_repository, repo_id)
-            old_hashes = (full_meta or {}).get("file_hashes")
-            if not isinstance(old_hashes, dict) or not old_hashes:
-                continue
-
             files = await asyncio.to_thread(load_repository_files, BACKEND_DIR)
             new_hashes = build_file_manifest(files)
-            if new_hashes != old_hashes:
-                job_store = IndexJobStore()
-                await asyncio.to_thread(
-                    job_store.enqueue,
-                    repo_id,
-                    LOCAL_REPO_URL,
-                    str(local_repo.get("branch") or "main"),
-                    "incremental",
-                    False,
-                )
+            for local_repo in (r for r in repos if r.get("repo_url") == LOCAL_REPO_URL):
+                repo_id = str(local_repo["id"])
+                full_meta = await asyncio.to_thread(store.get_repository, repo_id)
+                old_hashes = (full_meta or {}).get("file_hashes")
+                if isinstance(old_hashes, dict) and old_hashes and new_hashes != old_hashes:
+                    job_store = IndexJobStore()
+                    await asyncio.to_thread(
+                        job_store.enqueue, repo_id, LOCAL_REPO_URL,
+                        str(local_repo.get("branch") or "main"), "incremental", False,
+                    )
         except Exception:
             pass
 
@@ -282,7 +276,7 @@ def get_auth_context(
     if isinstance(authorization, str) and authorization.lower().startswith("bearer "):
         token = authorization[7:].strip() or None
 
-    resolved_user_id = x_user_id if isinstance(x_user_id, str) else None
+    resolved_user_id = None
     email = None
     name = None
     avatar_url = None
@@ -290,7 +284,7 @@ def get_auth_context(
     if token:
         verified = _verify_supabase_token(token)
         if verified:
-            resolved_user_id = verified.get("id") or resolved_user_id
+            resolved_user_id = verified.get("id")
             email = verified.get("email")
             name = verified.get("name")
             avatar_url = verified.get("avatar_url")
@@ -304,14 +298,46 @@ def get_auth_context(
     )
 
 
+def require_auth(auth: AuthContext = Depends(get_auth_context)) -> AuthContext:
+    if not auth.user_id or not auth.access_token:
+        raise HTTPException(status_code=401, detail="Sign in with Google to access your workspace.")
+    return auth
+
+
+def require_repository(store: SupabaseVectorStore, repo_id: str, auth: AuthContext) -> dict[str, Any]:
+    repo = store.get_repository(repo_id)
+    if not repo or repo.get("owner_id") != auth.user_id:
+        raise HTTPException(status_code=404, detail="Repository not found.")
+    return repo
+
+
+def require_conversation(store: SupabaseVectorStore, conversation_id: str, auth: AuthContext) -> dict[str, Any]:
+    conversation = store.get_conversation(conversation_id)
+    if not conversation or not conversation.get("repo_id"):
+        raise HTTPException(status_code=404, detail="Conversation not found.")
+    require_repository(store, str(conversation["repo_id"]), auth)
+    return conversation
+
+
+def authorize_chat(store: SupabaseVectorStore, req: ChatRequest, auth: AuthContext) -> None:
+    if req.conversation_id:
+        conversation = require_conversation(store, req.conversation_id, auth)
+        if req.repo_id and req.repo_id != str(conversation["repo_id"]):
+            raise HTTPException(status_code=400, detail="Conversation does not belong to the selected repository.")
+        req.repo_id = str(conversation["repo_id"])
+    if not req.repo_id:
+        raise HTTPException(status_code=400, detail="Select an indexed repository before asking a question.")
+    require_repository(store, req.repo_id, auth)
+
+
 @app.get("/api/auth/config")
 def get_auth_config() -> dict[str, Any]:
     """Returns public Supabase Auth configuration for Google OAuth sign-in on the frontend."""
     anon_key = settings.SUPABASE_ANON_KEY.strip()
-    if not anon_key and settings.SUPABASE_KEY and not settings.SUPABASE_KEY.startswith("sb_secret_"):
+    if not anon_key and settings.SUPABASE_KEY.startswith("sb_publishable_"):
         anon_key = settings.SUPABASE_KEY.strip()
     return {
-        "enabled": bool(settings.SUPABASE_URL and (anon_key or settings.SUPABASE_KEY)),
+        "enabled": bool(settings.SUPABASE_URL and anon_key),
         "providers": ["google"],
         "supabase_url": settings.SUPABASE_URL.rstrip("/") if settings.SUPABASE_URL else "",
         "supabase_anon_key": anon_key,
@@ -381,10 +407,10 @@ def health_check() -> dict[str, Any]:
 
 
 @app.get("/api/repos")
-def list_repos() -> dict[str, Any]:
+def list_repos(_auth: AuthContext = Depends(require_auth)) -> dict[str, Any]:
     try:
         store = SupabaseVectorStore()
-        return {"repos": store.list_repositories()}
+        return {"repos": store.list_repositories(owner_id=_auth.user_id)}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -392,12 +418,11 @@ def list_repos() -> dict[str, Any]:
 @app.delete("/api/repos/{repo_id}")
 def delete_repo(
     repo_id: str,
-    _auth: AuthContext = Depends(get_auth_context),
+    _auth: AuthContext = Depends(require_auth),
 ) -> dict[str, Any]:
     try:
         store = SupabaseVectorStore()
-        if not store.get_repository(repo_id):
-            raise HTTPException(status_code=404, detail="Repository not found.")
+        require_repository(store, repo_id, _auth)
         store.delete_repository(repo_id)
         return {"deleted": True, "repo_id": repo_id}
     except HTTPException:
@@ -407,11 +432,10 @@ def delete_repo(
 
 
 @app.get("/api/repos/{repo_id}/conversations")
-def list_conversations(repo_id: str) -> dict[str, Any]:
+def list_conversations(repo_id: str, _auth: AuthContext = Depends(require_auth)) -> dict[str, Any]:
     try:
         store = SupabaseVectorStore()
-        if not store.get_repository(repo_id):
-            raise HTTPException(status_code=404, detail="Repository not found.")
+        require_repository(store, repo_id, _auth)
         return {"conversations": store.list_conversations(repo_id)}
     except HTTPException:
         raise
@@ -420,11 +444,10 @@ def list_conversations(repo_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/repos/{repo_id}/conversations")
-def create_conversation(repo_id: str, req: CreateConversationRequest) -> dict[str, Any]:
+def create_conversation(repo_id: str, req: CreateConversationRequest, _auth: AuthContext = Depends(require_auth)) -> dict[str, Any]:
     try:
         store = SupabaseVectorStore()
-        if not store.get_repository(repo_id):
-            raise HTTPException(status_code=404, detail="Repository not found.")
+        require_repository(store, repo_id, _auth)
         conversation_id = store.create_conversation(repo_id=repo_id, title=req.title.strip() or "New chat")
         conversation = store.get_conversation(conversation_id)
         return {"conversation": conversation}
@@ -439,12 +462,11 @@ def get_conversation_messages(
     conversation_id: str,
     limit: int = Query(default=4, ge=1, le=50),
     before_id: int | None = Query(default=None, ge=1),
+    _auth: AuthContext = Depends(require_auth),
 ) -> dict[str, Any]:
     try:
         store = SupabaseVectorStore()
-        conversation = store.get_conversation(conversation_id)
-        if not conversation:
-            raise HTTPException(status_code=404, detail="Conversation not found.")
+        conversation = require_conversation(store, conversation_id, _auth)
         messages, has_more = store.get_conversation_messages(
             conversation_id, limit=limit, before_id=before_id
         )
@@ -463,7 +485,7 @@ def get_conversation_messages(
 @app.post("/api/ingest")
 async def ingest_repository(
     req: IngestRequest,
-    _auth: AuthContext = Depends(get_auth_context),
+    _auth: AuthContext = Depends(require_auth),
 ) -> dict[str, Any]:
     raw_url = req.repo_url.strip()
     if not raw_url:
@@ -473,7 +495,7 @@ async def ingest_repository(
     lock = _SYNC_LOCKS.setdefault(lock_key, asyncio.Lock())
     try:
         async with lock:
-            return await asyncio.to_thread(_execute_ingest, raw_url, req.branch, req.llm_summaries)
+            return await asyncio.to_thread(_execute_ingest, raw_url, req.branch, req.llm_summaries, _auth.user_id)
     except HTTPException:
         raise
     except Exception as exc:
@@ -485,21 +507,19 @@ async def reindex_repository(
     repo_id: str,
     background_tasks: BackgroundTasks,
     wait: bool = Query(default=False),
-    _auth: AuthContext = Depends(get_auth_context),
+    _auth: AuthContext = Depends(require_auth),
 ) -> dict[str, Any]:
     """Queues a background incremental re-index job (or runs synchronously when `?wait=true`)."""
     try:
         store = SupabaseVectorStore()
-        repo = await asyncio.to_thread(store.get_repository, repo_id)
-        if not repo:
-            raise HTTPException(status_code=404, detail="Repository not found.")
+        repo = await asyncio.to_thread(require_repository, store, repo_id, _auth)
         repo_url = str(repo["repo_url"])
         branch = str(repo.get("branch") or "main")
 
         if wait:
             lock = _SYNC_LOCKS.setdefault(repo_url, asyncio.Lock())
             async with lock:
-                return await asyncio.to_thread(_execute_ingest, repo_url, branch, False)
+                return await asyncio.to_thread(_execute_ingest, repo_url, branch, False, _auth.user_id)
 
         job_store = IndexJobStore()
         row = await asyncio.to_thread(
@@ -517,14 +537,12 @@ async def reindex_repository(
 async def sync_repository_async(
     repo_id: str,
     background_tasks: BackgroundTasks,
-    _auth: AuthContext = Depends(get_auth_context),
+    _auth: AuthContext = Depends(require_auth),
 ) -> dict[str, Any]:
     """Queues an asynchronous incremental SHA-256 sync job for an existing repository."""
     try:
         store = SupabaseVectorStore()
-        repo = await asyncio.to_thread(store.get_repository, repo_id)
-        if not repo:
-            raise HTTPException(status_code=404, detail="Repository not found.")
+        repo = await asyncio.to_thread(require_repository, store, repo_id, _auth)
         repo_url = str(repo["repo_url"])
         branch = str(repo.get("branch") or "main")
 
@@ -541,13 +559,14 @@ async def sync_repository_async(
 
 
 @app.get("/api/jobs/{job_id}")
-def get_index_job(job_id: str) -> dict[str, Any]:
+def get_index_job(job_id: str, _auth: AuthContext = Depends(require_auth)) -> dict[str, Any]:
     """Returns the current status and stats of a background indexing job."""
     try:
         job_store = IndexJobStore()
         row = job_store.get(job_id)
         if not row:
             raise HTTPException(status_code=404, detail="Job not found.")
+        require_repository(SupabaseVectorStore(), str(row["repo_id"]), _auth)
         return {"job": public_job(row)}
     except HTTPException:
         raise
@@ -556,12 +575,15 @@ def get_index_job(job_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/repos/{repo_id}/jobs")
-def list_repo_index_jobs(repo_id: str, limit: int = Query(default=10, ge=1, le=50)) -> dict[str, Any]:
+def list_repo_index_jobs(repo_id: str, limit: int = Query(default=10, ge=1, le=50), _auth: AuthContext = Depends(require_auth)) -> dict[str, Any]:
     """Lists recent indexing jobs for a repository."""
     try:
         job_store = IndexJobStore()
+        require_repository(SupabaseVectorStore(), repo_id, _auth)
         rows = job_store.list_for_repo(repo_id, limit=limit)
         return {"jobs": [public_job(r) for r in rows]}
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -589,12 +611,13 @@ def _format_retrieved_chunks(chunks: list[dict[str, Any]]) -> list[dict[str, Any
 
 
 @app.post("/api/chat")
-def chat_with_repo(req: ChatRequest) -> dict[str, Any]:
+def chat_with_repo(req: ChatRequest, _auth: AuthContext = Depends(require_auth)) -> dict[str, Any]:
     if not req.message or not req.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
     try:
         store = SupabaseVectorStore()
+        authorize_chat(store, req, _auth)
         embedder = NvidiaEmbedder()
         llm = NvidiaChatClient()
         retriever = CodebaseRetriever(vector_store=store, embedder=embedder, llm_client=llm)
@@ -625,6 +648,8 @@ def chat_with_repo(req: ChatRequest) -> dict[str, Any]:
             "chunks": _format_retrieved_chunks(turn.retrieval.chunks),
             "timings_ms": turn.timings_ms,
         }
+    except HTTPException:
+        raise
     except (QueryRewriteError, RerankerServiceError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -632,12 +657,13 @@ def chat_with_repo(req: ChatRequest) -> dict[str, Any]:
 
 
 @app.post("/api/chat/stream")
-def chat_with_repo_stream(req: ChatRequest) -> StreamingResponse:
+def chat_with_repo_stream(req: ChatRequest, _auth: AuthContext = Depends(require_auth)) -> StreamingResponse:
     """Streams retrieved chunks and LLM answer tokens via Server-Sent Events (SSE)."""
     if not req.message or not req.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
     store = SupabaseVectorStore()
+    authorize_chat(store, req, _auth)
     embedder = NvidiaEmbedder()
     llm = NvidiaChatClient()
     retriever = CodebaseRetriever(vector_store=store, embedder=embedder, llm_client=llm)

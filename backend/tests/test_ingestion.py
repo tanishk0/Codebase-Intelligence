@@ -92,6 +92,7 @@ class TestIngestionHelpers(unittest.TestCase):
             self.assertEqual([f.file_path for f in files], ["a.py"])
 
 
+
 class TestBackgroundReindexJobFlow(unittest.IsolatedAsyncioTestCase):
     @patch("main.SupabaseVectorStore")
     @patch("main.IndexJobStore")
@@ -100,6 +101,7 @@ class TestBackgroundReindexJobFlow(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         mock_store_cls.return_value.get_repository.return_value = {
             "id": "repo-1",
+            "owner_id": "user-1",
             "repo_url": "https://github.com/org/repo",
             "branch": "main",
         }
@@ -115,19 +117,25 @@ class TestBackgroundReindexJobFlow(unittest.IsolatedAsyncioTestCase):
             "error": "",
         }
         bg = MagicMock()
-        result = await api_main.reindex_repository("repo-1", background_tasks=bg, wait=False)
+        result = await api_main.reindex_repository(
+            "repo-1", background_tasks=bg, wait=False,
+            _auth=api_main.AuthContext(user_id="user-1", access_token="token"),
+        )
 
         self.assertEqual(result["job_id"], "job-123")
         self.assertEqual(result["status"], "queued")
         bg.add_task.assert_called_once_with(api_main._claim_and_run_once)
 
+    @patch("main.SupabaseVectorStore")
     @patch("main._execute_ingest")
     async def test_run_job_record_sends_heartbeat_and_marks_job_succeeded(
-        self, mock_exec: MagicMock
+        self, mock_exec: MagicMock, mock_store_cls: MagicMock
     ) -> None:
         import asyncio
 
-        def slow_ingest(_url: str, _branch: str, _llm: bool) -> dict:
+        mock_store_cls.return_value.get_repository.return_value = {"owner_id": "user-1"}
+
+        def slow_ingest(_url: str, _branch: str, _llm: bool, _owner: str) -> dict:
             import time
             time.sleep(0.05)
             return {
@@ -156,6 +164,7 @@ class TestBackgroundReindexJobFlow(unittest.IsolatedAsyncioTestCase):
         job_store.succeed.assert_called_once()
         self.assertEqual(job_store.succeed.call_args.args[0], "job-456")
         self.assertEqual(job_store.succeed.call_args.kwargs["stats"]["changed_files"], 1)
+        self.assertEqual(mock_exec.call_args.args[-1], "user-1")
 
 
 class TestGoogleAuthEndpoints(unittest.TestCase):

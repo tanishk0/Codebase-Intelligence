@@ -63,22 +63,24 @@ class SupabaseVectorStore:
 
     # ---------- repository bookkeeping ----------
 
-    def list_repositories(self) -> list[dict[str, Any]]:
+    def list_repositories(self, owner_id: str | None = None) -> list[dict[str, Any]]:
         """Lists all indexed repositories ordered by most recently indexed."""
-        res = (
+        query = (
             self.client.table("repositories")
-            .select("id,repo_url,branch,chunk_count,embed_model,embedding_dim,indexed_at,active_run_id")
+            .select("id,repo_url,branch,chunk_count,embed_model,embedding_dim,indexed_at,active_run_id,owner_id")
             .order("indexed_at", desc=True)
-            .execute()
         )
+        if owner_id is not None:
+            query = query.eq("owner_id", owner_id)
+        res = query.execute()
         return list(res.data or [])
 
-    def get_or_create_repository(self, repo_url: str, branch: str = "main") -> str:
+    def get_or_create_repository(self, repo_url: str, branch: str = "main", owner_id: str | None = None) -> str:
         """Returns the repository id, creating the record if needed. Does not touch the active index."""
         clean_url = repo_url.strip().rstrip("/")
         res = (
             self.client.table("repositories")
-            .upsert({"repo_url": clean_url, "branch": branch}, on_conflict="repo_url")
+            .upsert({"repo_url": clean_url, "branch": branch, "owner_id": owner_id}, on_conflict="owner_id,repo_url")
             .execute()
         )
         if not res.data:
@@ -321,10 +323,11 @@ class SupabaseVectorStore:
         include_summaries: bool = True,
         summarizer: RepoSummarizer | None = None,
         llm_summaries: bool = False,
+        owner_id: str | None = None,
     ) -> str:
         """Analyzes dependencies and indexes chunks; if `files` and prior `file_hashes` exist, re-embeds only changed files."""
         active_embedder = embedder or NvidiaEmbedder()
-        repo_id = self.get_or_create_repository(repo_url=repo_url, branch=branch)
+        repo_id = self.get_or_create_repository(repo_url=repo_url, branch=branch, owner_id=owner_id)
         new_hashes = build_file_manifest(files) if files else None
         pipeline_version = self.pipeline_version(active_embedder.model, active_embedder.dimensions)
 

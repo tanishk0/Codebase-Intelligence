@@ -7,7 +7,7 @@ create extension if not exists vector;
 -- 2. Repositories table (tracks indexed GitHub repositories + repo-level summary)
 create table if not exists public.repositories (
     id uuid primary key default gen_random_uuid(),
-    repo_url text not null unique,
+    repo_url text not null,
     branch text not null default 'main',
     chunk_count integer not null default 0,
     active_run_id uuid,
@@ -206,7 +206,7 @@ as $$
 $$;
 
 grant execute on function public.hybrid_search_code_chunks(vector, text, uuid, int, int)
-    to anon, authenticated, service_role;
+    to service_role;
 
 -- 7. True BM25 hybrid retrieval. Vector and BM25 candidates are fetched independently
 -- by the API and fused there with reciprocal-rank fusion.
@@ -295,7 +295,7 @@ $$;
 
 grant execute on function public.semantic_search_code_chunks(vector, uuid, int),
     public.bm25_search_code_chunks(text, uuid, int)
-    to anon, authenticated, service_role;
+    to service_role;
 
 -- 7. Background index jobs: durable, pollable, lease-claimed work queue.
 create table if not exists public.index_jobs (
@@ -402,7 +402,7 @@ $$;
 
 grant execute on function public.claim_next_index_job(text, int),
     public.copy_chunks_to_run(uuid, uuid, uuid, text[])
-    to anon, authenticated, service_role;
+    to service_role;
 
 -- 10. Atomically replace the chunks of a group of files inside the active run.
 --     DELETE + INSERT run in one transaction, so a reader sees either the old version of a
@@ -458,4 +458,50 @@ end;
 $$;
 
 grant execute on function public.replace_file_chunks(uuid, uuid, text[], jsonb)
-    to anon, authenticated, service_role;
+    to service_role;
+
+-- 11. Workspace ownership and backend-only data access (also available as a migration).
+-- Apply to an existing installation before starting the updated backend.
+-- Existing ownerless repositories remain private to backend maintenance tools.
+begin;
+
+alter table public.repositories add column if not exists owner_id uuid;
+alter table public.repositories drop constraint if exists repositories_repo_url_key;
+create unique index if not exists idx_repositories_owner_url
+    on public.repositories (owner_id, repo_url) nulls not distinct;
+
+-- Browser clients use Supabase Auth only. Application data goes through the API,
+-- which verifies the JWT and repository ownership using a backend service key.
+alter table public.repositories enable row level security;
+alter table public.code_chunks enable row level security;
+alter table public.conversations enable row level security;
+alter table public.messages enable row level security;
+alter table public.index_jobs enable row level security;
+
+revoke all on table public.repositories, public.code_chunks,
+    public.conversations, public.messages, public.index_jobs
+    from public, anon, authenticated;
+grant all on table public.repositories, public.code_chunks,
+    public.conversations, public.messages, public.index_jobs to service_role;
+grant usage, select on sequence public.code_chunks_id_seq, public.messages_id_seq to service_role;
+
+-- SECURITY DEFINER functions otherwise bypass RLS. Revoke PostgreSQL's default
+-- PUBLIC execute privilege as well as the previous explicit browser grants.
+revoke all on function
+    public.hybrid_search_code_chunks(vector, text, uuid, int, int),
+    public.semantic_search_code_chunks(vector, uuid, int),
+    public.bm25_search_code_chunks(text, uuid, int),
+    public.claim_next_index_job(text, int),
+    public.copy_chunks_to_run(uuid, uuid, uuid, text[]),
+    public.replace_file_chunks(uuid, uuid, text[], jsonb)
+    from public, anon, authenticated;
+grant execute on function
+    public.hybrid_search_code_chunks(vector, text, uuid, int, int),
+    public.semantic_search_code_chunks(vector, uuid, int),
+    public.bm25_search_code_chunks(text, uuid, int),
+    public.claim_next_index_job(text, int),
+    public.copy_chunks_to_run(uuid, uuid, uuid, text[]),
+    public.replace_file_chunks(uuid, uuid, text[], jsonb)
+    to service_role;
+
+commit;
