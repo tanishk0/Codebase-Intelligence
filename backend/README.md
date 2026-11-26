@@ -1,34 +1,58 @@
-# Codebase Copilot - Backend
+# Arcline backend
 
-High-performance codebase ingestion, AST chunking, hierarchical summarization, hybrid RRF retrieval, and conversational RAG engine for Codebase Copilot.
+FastAPI API for repository ingestion, incremental indexing, hybrid retrieval, and conversational code Q&A. See the root [README](../README.md) for credentials, database migration, Google OAuth, and frontend setup.
 
-## Architecture
+## Run
 
-### Ingestion (`ingestion/`)
-- **`config.py`**: Pydantic-based configuration loading `.env` credentials (`SUPABASE_URL`, `SUPABASE_KEY`, `NVIDIA_API_KEY`), Nemotron model parameters, and retrieval budgets.
-- **`ingestion/git_clone.py`**: Safe GitHub URL validation and shallow (`depth=1`) cloning to temporary workspaces (automatically detecting default branches).
-- **`ingestion/loader.py`**: Fast recursive directory scanner rejecting symlinks/path escapes, binaries, and oversized files.
-- **`ingestion/chunker.py`**: Tree-sitter powered AST chunker supporting Python, JavaScript, TypeScript, and TSX with symbol extraction, oversized function splitting, class headers, and camelCase/snake_case identifier splitting for full-text search.
-- **`ingestion/summarizer.py`**: Outline-based file and repository summarizer (`file_summary` chunks + `repo_summary` overview) with optional batched LLM enrichment.
-- **`ingestion/embedder.py`**: Batched NVIDIA NIM embedding client (`nvidia/llama-nemotron-embed-vl-1b-v2`, 1024-dim) with passage/query asymmetric encoding with rate-limiting backoff, client-side rate limiting, and retry backoff.
-- **`ingestion/vector_store.py`**: Crash-safe Supabase store with atomic `run_id` swaps, independent pgvector and BM25 retrieval fused by RRF, symbol lookup, context neighbor queries, and multi-turn conversation storage.
+From this directory:
 
-### Retrieval & Conversational RAG (`retrieval/`)
-- **`retrieval/llm.py`**: Dual-tier NVIDIA NIM chat client pairing `nvidia/nemotron-3-ultra-550b-a55b` (deep code answers) with `nvidia/nemotron-3.5-bolt-e4b` (fast query rewriting & batched summaries).
-- **`retrieval/query_router.py`**: Rewrites ambiguous follow-up questions using chat history and routes queries (`symbol`, `file`, `overview`, or `hybrid`).
-- **`retrieval/reranker.py`**: NVIDIA cross-encoder reranker that scores every unique hybrid candidate before selecting final top-K chunks, plus `ContextAssembler` for headers, overlap merging, and budget enforcement.
-- **`retrieval/retriever.py`**: End-to-end `CodebaseRetriever` orchestrating routing, hybrid RRF search, chunk carry-over, model reranking, and context expansion.
-- **`retrieval/chat_engine.py`**: `ConversationalRAGEngine` managing multi-turn history, rolling conversation summaries, cited chunk carry-over, and grounded `[file_path:Lstart-Lend]` answers.
+```powershell
+uv sync --locked
+uv run python main.py
+```
 
-## Setup & Running Tests
+The backend listens on `127.0.0.1:8000`. Vite development runs separately on port 5173. A built `frontend/dist` is served by FastAPI at `/` and `/workspace`.
 
-```bash
-# 1. Install dependencies with uv
-uv sync
+## Modules
 
-# 2. Run unit test suite
+- `config.py`: Pydantic settings from root `.env` and optional `backend/.env` overrides.
+- `main.py`: API routes, verified Google/Supabase authentication, repository ownership checks, streaming chat, and background worker lifecycle.
+- `ingestion/git_clone.py`: HTTPS GitHub validation and temporary shallow clones with default-branch detection.
+- `ingestion/loader.py`: bounded text loading, deterministic file hashes, path/symlink checks, and environment/private-key file exclusions.
+- `ingestion/chunker.py`: AST chunks for Python/JS/TS/JSX/TSX, symbol metadata, class headers, identifier splitting, and fallback text chunks.
+- `ingestion/dependency.py`: import, inheritance, and call relationships, including aliases and barrel resolution.
+- `ingestion/summarizer.py`: file/repository outlines and optional LLM-enriched summaries.
+- `ingestion/embedder.py`: batched NVIDIA embeddings with query/passage encoding, request limits, and retries.
+- `ingestion/vector_store.py`: Supabase storage, owner-specific repository identity, full-run activation, incremental file replacements, BM25/semantic search fusion, and conversation persistence.
+- `ingestion/jobs.py`: durable indexing jobs with atomic claims, leases, heartbeats, and expired-job recovery.
+- `retrieval/query_router.py`: follow-up rewriting, file/symbol hints, and retrieval skipping for greetings/meta questions. Code questions share one hybrid retrieval path.
+- `retrieval/reranker.py`: NVIDIA cross-encoder ranking and context merging/budgeting.
+- `retrieval/retriever.py`: hybrid search, prior-chunk carry-over, reranking, and context expansion with headers and up to four one-hop callers.
+- `retrieval/chat_engine.py`: grounded cited answers, streaming, recent-turn memory, rolling summaries, and persistence.
+- `supabase_schema.sql`: complete idempotent schema for fresh installs.
+- `migrations/001_workspace_ownership.sql`: ownership and backend-only database access for existing installs. Apply before using the updated API.
+
+## Models and limits
+
+Defaults in `config.py` use `nvidia/llama-nemotron-embed-vl-1b-v2` with 1024-dimensional embeddings, `nvidia/llama-nemotron-rerank-vl-1b-v2` for reranking, and `nvidia/nemotron-3-ultra-550b-a55b` for answers. `NVIDIA_FAST_MODEL` is a separately configurable setting for rewrites and summaries; it currently defaults to the same model as answers. Override these settings in `.env` as needed.
+
+Retrieval defaults to 40 candidates, eight final chunks, and a 6,000-token code-context budget. Loading is capped at 2,000 files, 500 KB per file, and 50 MB total source. The `local` input indexes this backend directory, with change detection every 15 seconds while running.
+
+Full builds preserve the live run until activation. Incremental sync replaces bounded file groups atomically within the current run; a failure after an earlier group commits can leave a partially updated repository until retry.
+
+## Tests
+
+```powershell
 uv run python -m unittest discover -s tests -v
+```
 
-# 3. Run live NVIDIA + Supabase smoke test (after running supabase_schema.sql in Supabase SQL Editor)
+Unit tests mock external services and include API authentication/ownership coverage. On Windows, symlink creation may cause one test to skip. Async tests require permission to create local event-loop sockets.
+
+Optional live checks (network access and configured services required):
+
+```powershell
+uv run python tests/smoke_test_ingestion.py
 uv run python tests/smoke_test_embeddings.py
 ```
+
+The embedding smoke test writes an ownerless maintenance index, which is deliberately absent from user workspaces.
